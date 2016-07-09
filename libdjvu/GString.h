@@ -1429,9 +1429,6 @@ inline GBaseString::GBaseString(void) { init(); }
 
 inline GUTF8String::GUTF8String(void) { }
 
-inline GUTF8String::GUTF8String(const GUTF8String &str)
-{ init(str); }
-
 inline GUTF8String& GUTF8String::operator= (const GP<GStringRep> &str)
 { return init(str); }
 

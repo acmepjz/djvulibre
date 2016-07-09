@@ -175,10 +175,10 @@ hash(const unsigned long & x)
 }
 
 /** Hashing function (const void *). */
-static inline unsigned int 
+static inline intptr_t 
 hash(const void * const & x) 
 { 
-  return (unsigned int)(size_t) x; 
+  return (intptr_t)(size_t) x; 
 }
 
 /** Hashing function (float). */

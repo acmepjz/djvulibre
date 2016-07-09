@@ -71,6 +71,7 @@
 #endif
 
 #ifdef _WIN32
+#pragma warning( disable : 4251 )
 # ifdef DJVUAPI_EXPORT
 #  define DJVUAPI __declspec(dllexport)
 # else

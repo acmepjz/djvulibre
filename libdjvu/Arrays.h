@@ -125,7 +125,7 @@ namespace DJVU {
 //@{
 
 // Auxiliary classes: Will be used in place of GPBase and GPEnabled objects
-class _ArrayRep
+class DJVUAPI _ArrayRep
 {
    friend class	_ArrayBase;
 public:
@@ -143,7 +143,7 @@ private:
    void		unref(void) { if (--count==0) delete this; }
 };
 
-class _ArrayBase
+class DJVUAPI _ArrayBase
 {
 public:
    _ArrayBase(void) : rep(0) {}

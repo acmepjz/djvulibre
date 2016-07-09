@@ -2588,6 +2588,8 @@ GUTF8String::GUTF8String(const GUTF8String &fmt, va_list &args)
   else 
     init(fmt); 
 }
+GUTF8String::GUTF8String(const GUTF8String &str)
+{ init(str); }
 
 GUTF8String::GUTF8String(const char *str)
 { init(GStringRep::UTF8::create(str)); }

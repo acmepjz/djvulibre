@@ -98,10 +98,11 @@ inline unsigned char
 umin(unsigned char a, unsigned char b) 
 { return (a>b) ? b : a; }
 
+#if !defined(_MSC_VER) || _MSC_VER < 1600
 inline float 
 fmin(float a, float b) 
 { return (a>b) ? b : a; }
-
+#endif
 
 
 // ------- DJVUPALETTE
