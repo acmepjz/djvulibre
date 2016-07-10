@@ -1,7 +1,7 @@
 # libdjvu tools
 
 include_directories( ../libdjvu 
-                     ..)
+                     ${ADDITIONAL_INCLUDES})
 
 # ******************************************************************************
 # add a convenience library even though cmake doesn't really support this
@@ -17,7 +17,7 @@ add_library(jb2 STATIC ${JB2_SRC})
 # add a macro for all tools
 macro(add_djvutool name)
     add_executable(${name} ${ARGN})
-    target_link_libraries(${name} djvulibre)
+    target_link_libraries(${name} djvulibre ${ADDITIONAL_LIBRARIES})
     install(TARGETS ${name} ${INSTALL_TARGETS_DEFAULT_ARGS})
 endmacro(add_djvutool name)
 
@@ -37,9 +37,9 @@ add_djvutool(djvused djvused.cpp)
 add_djvutool(djvutxt djvutxt.cpp)
 add_djvutool(djvuserve djvuserve.cpp)
 
-target_link_libraries(cjb2 jb2 djvulibre)
-target_link_libraries(cpaldjvu jb2 djvulibre)
-target_link_libraries(csepdjvu jb2 djvulibre)
+target_link_libraries(cjb2 jb2 djvulibre ${ADDITIONAL_LIBRARIES})
+target_link_libraries(cpaldjvu jb2 djvulibre ${ADDITIONAL_LIBRARIES})
+target_link_libraries(csepdjvu jb2 djvulibre ${ADDITIONAL_LIBRARIES})
 
 # ******************************************************************************
 # install man pages

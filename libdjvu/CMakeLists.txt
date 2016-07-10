@@ -60,9 +60,13 @@ set(DJVU_SRC
         debug.cpp
 )
 
+include_directories(${ADDITIONAL_INCLUDES})
+
 add_library(djvulibre SHARED ${DJVU_SRC})
 
 set_target_properties(djvulibre PROPERTIES DEFINE_SYMBOL DJVUAPI_EXPORT)
+
+target_link_libraries(djvulibre ${ADDITIONAL_LIBRARIES})
 
 install(TARGETS djvulibre ${INSTALL_TARGETS_DEFAULT_ARGS})
 
