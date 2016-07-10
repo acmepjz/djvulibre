@@ -15,7 +15,7 @@ add_library(libminidjvu STATIC ${SOURCES})
 
 # ******************************************************************************
 # build minidjvu
-add_executable(minidjvu tools/minidjvu.c)
+add_executable(minidjvu tools/minidjvu.cpp)
 target_link_libraries(minidjvu libminidjvu ${ADDITIONAL_LIBRARIES})
 
 install(TARGETS minidjvu ${INSTALL_TARGETS_DEFAULT_ARGS})
