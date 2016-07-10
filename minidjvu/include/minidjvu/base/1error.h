@@ -20,7 +20,8 @@ typedef enum
     mdjvu_error_djvu_no_Sjbz,
     mdjvu_error_recursive_prototypes,
     mdjvu_error_tiff_support_disabled,
-    mdjvu_error_png_support_disabled
+    mdjvu_error_png_support_disabled,
+	mdjvu_error_bw
 } MinidjvuErrorType;
 
 MDJVU_FUNCTION const char *mdjvu_get_error_message(mdjvu_error_t);

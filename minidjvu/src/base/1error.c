@@ -40,6 +40,8 @@ MDJVU_IMPLEMENT mdjvu_error_t mdjvu_get_error(MinidjvuErrorType e)
             return (mdjvu_error_t) _("minidjvu was compiled without TIFF support");
         case mdjvu_error_png_support_disabled:
             return (mdjvu_error_t) _("minidjvu was compiled without PNG support");
+        case mdjvu_error_bw:
+            return (mdjvu_error_t) _("The bitmap is not black-and-white (not 1-bit)");
     }
     return (mdjvu_error_t)
         _("some weird error happened, probably caused by a bug in minidjvu");

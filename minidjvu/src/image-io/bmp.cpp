@@ -248,3 +248,123 @@ MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_load_bmp(const char *path, mdjvu_error_t *p
     fclose(f);
     return result;
 }
+
+#if HAVE_FREEIMAGE
+
+////////////////////////////////////////////////////////////////////////////////
+/**
+FreeImage error handler
+@param fif Format / Plugin responsible for the error
+@param message Error message
+*/
+void FreeImageErrorHandler(FREE_IMAGE_FORMAT fif, const char *message) {
+	printf("\n*** %s Format\n%s ***\n", FreeImage_GetFormatFromFIF(fif), message);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/** Generic image loader
+
+@param lpszPathName Pointer to the full file name
+@param flag Optional load flag constant
+@return Returns the loaded dib if successful, returns NULL otherwise
+*/
+
+FIBITMAP* GenericLoader(const char* lpszPathName, int flag)
+{
+	FREE_IMAGE_FORMAT fif = FIF_UNKNOWN;
+	// check the file signature and deduce its format
+	// (the second argument is currently not used by FreeImage)
+
+	fif = FreeImage_GetFileType(lpszPathName, 0);
+
+	FIBITMAP* dib;
+
+	if (fif == FIF_UNKNOWN)
+	{
+		// no signature ?
+		// try to guess the file format from the file extension
+		fif = FreeImage_GetFIFFromFilename(lpszPathName);
+	}
+
+	// check that the plugin has reading capabilities ...
+	if ((fif != FIF_UNKNOWN) && FreeImage_FIFSupportsReading(fif))
+	{
+		// ok, let's load the file
+		dib = FreeImage_Load(fif, lpszPathName, flag);
+
+		// unless a bad file format, we are done !
+		if (!dib)
+		{
+			printf("File \"%s\" not found.\n", lpszPathName);
+			return NULL;
+		}
+	}
+
+	return dib;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_file_load_fibitmap(FIBITMAP* dib, mdjvu_error_t *perr)
+{
+	unsigned w = FreeImage_GetWidth(dib);
+
+	unsigned h = FreeImage_GetHeight(dib);
+
+	unsigned src_pitch = FreeImage_GetPitch(dib);
+
+	int invert = 0;
+
+	int bytes_per_row = FreeImage_GetLine(dib);
+
+	if (FreeImage_GetColorType(dib) == FIC_MINISBLACK) invert = 1;
+
+	BYTE* src_bits = (BYTE*)FreeImage_GetBits(dib);
+
+
+	mdjvu_bitmap_t result = mdjvu_bitmap_create(w, h);
+
+	BYTE* lines;
+
+	for (unsigned y = 0; y < h; y++)
+	{
+		lines = src_bits + y * src_pitch;
+
+		unsigned char *row = mdjvu_bitmap_access_packed_row(result, h - y - 1);
+
+		memcpy(row, lines, bytes_per_row);
+
+		if (invert) invert_row(row, bytes_per_row, w);
+	}
+
+	return result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_load_fibitmap(const char *path, mdjvu_error_t *perr)
+{
+	FIBITMAP *dib = GenericLoader(path, 0);
+
+	unsigned bpp = FreeImage_GetBPP(dib);
+
+	if (bpp != 1)
+	{
+		//printf("The bitmap is not black-and-white (not 1-bit).\n");
+
+		*perr = mdjvu_get_error(mdjvu_error_bw);
+
+		FreeImage_Unload(dib);
+
+		return NULL;
+	}
+
+	mdjvu_bitmap_t result = mdjvu_file_load_fibitmap(dib, perr);
+
+	FreeImage_Unload(dib);
+
+	return result;
+}
+
+#endif

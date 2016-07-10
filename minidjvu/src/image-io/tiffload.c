@@ -118,8 +118,28 @@ static mdjvu_bitmap_t load_tiff(const char *path, int32 *presolution, mdjvu_erro
     return result;
 }
 
+#endif /* HAVE_TIFF */
+
 MDJVU_IMPLEMENT uint32 mdjvu_get_tiff_page_count(const char *path)
 {
+#if HAVE_FREEIMAGE
+	FREE_IMAGE_FORMAT fif = FreeImage_GetFileType(path, 0);
+
+	BOOL bMemoryCache = TRUE;
+
+	// Open src file (read-only, use memory cache)
+	FIMULTIBITMAP *src = FreeImage_OpenMultiBitmap(fif, path, FALSE, TRUE, bMemoryCache, 0);
+
+	if (src)
+	{
+		int count = FreeImage_GetPageCount(src);
+
+		// Close src
+		FreeImage_CloseMultiBitmap(src, 0);
+
+		return count;
+	}
+#elif HAVE_TIFF
     int dircount = 0;
     TIFF* tif = TIFFOpen(path, "r");
 
@@ -132,14 +152,18 @@ MDJVU_IMPLEMENT uint32 mdjvu_get_tiff_page_count(const char *path)
         TIFFClose(tif);
     }
     return dircount;
-}
+#endif
+    return 0;
 
-#endif /* HAVE_TIFF */
+
+}
 
 MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_load_tiff(const char *path, int32 *presolution, mdjvu_error_t *perr, uint32 idx)
 {
     #if HAVE_TIFF
         return load_tiff(path, presolution, perr, idx);
+	#elif HAVE_FREEIMAGE
+		return mdjvu_load_fibitmap(path, perr);
     #else
         *perr = mdjvu_get_error(mdjvu_error_tiff_support_disabled);
         return NULL;

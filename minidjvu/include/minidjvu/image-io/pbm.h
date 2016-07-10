@@ -2,6 +2,8 @@
  * pbm.h - loading and saving in PBM ("portable bitmap") format
  */
 
+#pragma once
+
 /*
  * 1 - success, 0 - failure
  */

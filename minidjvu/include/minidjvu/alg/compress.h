@@ -24,6 +24,7 @@ MDJVU_FUNCTION void mdjvu_set_verbose(mdjvu_compression_options_t, int);
 MDJVU_FUNCTION void mdjvu_set_no_prototypes(mdjvu_compression_options_t, int);
 MDJVU_FUNCTION void mdjvu_set_averaging(mdjvu_compression_options_t, int);
 MDJVU_FUNCTION void mdjvu_set_report(mdjvu_compression_options_t, int);
+MDJVU_FUNCTION void mdjvu_set_showpage(mdjvu_compression_options_t, int);
 MDJVU_FUNCTION void mdjvu_set_report_start_page(mdjvu_compression_options_t, int);
 MDJVU_FUNCTION void mdjvu_set_report_total_pages(mdjvu_compression_options_t, int);
 

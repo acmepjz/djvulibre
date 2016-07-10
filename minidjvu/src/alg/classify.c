@@ -297,7 +297,7 @@ MDJVU_IMPLEMENT int32 mdjvu_multipage_classify_patterns
     (int32 npages, int32 total_patterns_count, int32 *npatterns,
      mdjvu_pattern_t **patterns, int32 *result,
      int32 *dpi, mdjvu_matcher_options_t options,
-     void (*report)(void *, int), void *param)
+     void (*report)(void *, int), void (*report_processing)(void *, int), void *param)
 {
     /* a kluge for NULL patterns */
     /* FIXME: do it decently */
@@ -317,6 +317,9 @@ MDJVU_IMPLEMENT int32 mdjvu_multipage_classify_patterns
         mdjvu_pattern_t *p = patterns[page];
 
         int32 i;
+
+		report_processing(param, page);
+
         for (i = 0; i < n; i++)
         {
             all_patterns[patterns_gathered++] = p[i];
@@ -336,7 +339,7 @@ MDJVU_IMPLEMENT int32 mdjvu_multipage_classify_patterns
 MDJVU_IMPLEMENT int32 mdjvu_multipage_classify_bitmaps
     (int32 npages, int32 total_patterns_count, mdjvu_image_t *pages,
      int32 *result, mdjvu_matcher_options_t options,
-     void (*report)(void *, int), void *param, int centers_needed)
+     void (*report)(void *, int), void (*report_processing)(void *, int), void *param, int centers_needed)
 {
     int32 max_tag, k, page;
     int32 *npatterns = (int32 *) malloc(npages * sizeof(int32));
@@ -371,7 +374,7 @@ MDJVU_IMPLEMENT int32 mdjvu_multipage_classify_bitmaps
 
     max_tag = mdjvu_multipage_classify_patterns
         (npages, total_patterns_count, npatterns,
-         pointers, result, dpi, options, report, param);
+         pointers, result, dpi, options, report, report_processing, param);
 
     if (centers_needed)
     {

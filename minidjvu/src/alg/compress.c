@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <assert.h>
 
+int showpage = 0;
+
 struct MinidjvuCompressionOptions
 {
     int clean;
@@ -17,6 +19,7 @@ struct MinidjvuCompressionOptions
     int averaging;
     int report;
     int report_start_page;
+	int showpage;
     int report_total_pages;
     mdjvu_matcher_options_t matcher_options;
 };
@@ -58,6 +61,8 @@ MDJVU_IMPLEMENT void mdjvu_set_no_prototypes(mdjvu_compression_options_t opt, in
     {opt->no_prototypes = v;}
 MDJVU_IMPLEMENT void mdjvu_set_report(mdjvu_compression_options_t opt, int v)
     {opt->report = v;}
+MDJVU_IMPLEMENT void mdjvu_set_showpage(mdjvu_compression_options_t opt, int v)
+    {opt->showpage = v;}
 MDJVU_IMPLEMENT void mdjvu_set_report_start_page(mdjvu_compression_options_t opt, int v)
     {opt->report_start_page = v;}
 MDJVU_IMPLEMENT void mdjvu_set_report_total_pages(mdjvu_compression_options_t opt, int v)
@@ -279,12 +284,25 @@ static void set_substitutions(int n,
 }
 
 /* -------------------------------------------------------------------------- */
+static void report_processing(void *param, int current_page)
+{
+    mdjvu_compression_options_t r = (mdjvu_compression_options_t) param;
+    if (r->showpage)
+    {
+		setvbuf( stdout, NULL, _IONBF, 0 ); // disable buffering to redirect the output (page number) to GUI in real time
+
+        printf(_("Classificating: %d of %d\n"), r->report_start_page + current_page,
+                                                       r->report_total_pages);
+    }
+}
 
 static void report_classify(void *param, int page_completed)
 {
     mdjvu_compression_options_t r = (mdjvu_compression_options_t) param;
     if (r->report)
     {
+		setvbuf( stdout, NULL, _IONBF, 0 ); // disable buffering to redirect the output (page number) to GUI in real time
+
         printf(_("Classification: %d of %d completed\n"), r->report_start_page + page_completed,
                                                        r->report_total_pages);
     }
@@ -329,10 +347,11 @@ MDJVU_FUNCTION mdjvu_image_t mdjvu_compress_multipage(int n, mdjvu_image_t *page
 
     tags = MDJVU_MALLOCV(int32, total_bitmaps_count);
     if (options->report) printf(_("started classification\n"));
+	if (options->showpage && (!showpage)) {printf(_("started classificating\n"));showpage++;}
     max_tag = mdjvu_multipage_classify_bitmaps
         (n, total_bitmaps_count, pages, tags,
          ((struct MinidjvuCompressionOptions *) options)->matcher_options,
-         report_classify, options, options->averaging);
+         report_classify, report_processing, options, options->averaging);
     if (options->report) printf(_("finished classification\n"));
 
     dictionary_flags = (unsigned char *) malloc((max_tag + 1));

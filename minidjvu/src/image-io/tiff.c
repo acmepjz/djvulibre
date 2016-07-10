@@ -16,6 +16,8 @@ MDJVU_IMPLEMENT int mdjvu_have_tiff_support(void)
 {
     #if HAVE_TIFF
         return 1;
+    #elif HAVE_FREEIMAGE
+		return 1;
     #else
         return 0;
     #endif

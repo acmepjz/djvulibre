@@ -2,6 +2,7 @@
  * tiff.h - TIFF support
  */
 
+#pragma once
 
 /* TODO: save resolution */
 
