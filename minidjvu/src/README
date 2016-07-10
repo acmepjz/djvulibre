@@ -1,0 +1,10 @@
+This is the source directory for the minidjvu library.
+
+It contains the following subdirectories:
+
+    base     - basic things like bitmaps; all the other code uses the base.
+    alg      - various image processing algoritms
+    image-io - support for some common file formats: PBM, BMP, TIFF
+    jb2      - JB2 format support (DjVu stores bitonal images in JB2)
+    djvu     - DjVu format support (excluding JB2)
+    matcher  - the pattern matcher
