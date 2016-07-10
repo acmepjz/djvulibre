@@ -74,8 +74,8 @@
 # include <mbctype.h>
 #endif
 
-#include "libdjvu/miniexp.h"
-#include "libdjvu/ddjvuapi.h"
+#include "miniexp.h"
+#include "ddjvuapi.h"
 
 
 /* Some day we'll redo i18n right. */

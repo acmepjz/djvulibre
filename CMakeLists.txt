@@ -47,6 +47,27 @@ else()
 	option(HAVE_PTHREAD "Pthread support" OFF)
 endif()
 
+file(READ "configure.ac" CONFIGURE_AC)
+string(REGEX MATCH "m4_define\\(\\[v_maj\\],[ ]*\\[[0-9]+\\]\\)" V_MAJ ${CONFIGURE_AC})
+string(REGEX REPLACE "^.*\\[([0-9]+)\\].*$" "\\1" V_MAJ ${V_MAJ})
+string(REGEX MATCH "m4_define\\(\\[v_min\\],[ ]*\\[[0-9]+\\]\\)" V_MIN ${CONFIGURE_AC})
+string(REGEX REPLACE "^.*\\[([0-9]+)\\].*$" "\\1" V_MIN ${V_MIN})
+string(REGEX MATCH "m4_define\\(\\[v_mic\\],[ ]*\\[[0-9]+\\]\\)" V_MIC ${CONFIGURE_AC})
+string(REGEX REPLACE "^.*\\[([0-9]+)\\].*$" "\\1" V_MIC ${V_MIC})
+set(DJVULIBRE_VERSION "${V_MAJ}.${V_MIN}.${V_MIC}")
+message(STATUS "The version read from configure.ac is: ${DJVULIBRE_VERSION}")
+
+find_package(git)
+if(GIT_FOUND)
+	exec_program(${GIT_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR} ARGS "describe"
+		OUTPUT_VARIABLE VERSION RETURN_VALUE GIT_RETURN_VALUE)
+	if(GIT_RETURN_VALUE STREQUAL "0")
+		set(DJVULIBRE_VERSION ${VERSION})
+		message(STATUS "The version read from git is: ${DJVULIBRE_VERSION}")
+	endif()
+endif()
+add_definitions(-DDJVULIBRE_VERSION="${DJVULIBRE_VERSION}")
+
 set(INSTALL_TARGETS_DEFAULT_ARGS RUNTIME DESTINATION ${BIN_INSTALL_DIR}
                                  LIBRARY DESTINATION ${LIB_INSTALL_DIR}
                                  ARCHIVE DESTINATION ${LIB_INSTALL_DIR})

@@ -83,7 +83,7 @@
 # include <mbctype.h>
 #endif
 
-#include "libdjvu/ddjvuapi.h"
+#include "ddjvuapi.h"
 #include "tiff2pdf.h"
 
 
