@@ -2,6 +2,8 @@ project(djvulibre)
 
 cmake_minimum_required(VERSION 2.6)
 
+Set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
 # ******************************************************************************
 # add some predefined variables
 set(LIB_SUFFIX "" CACHE STRING "Define suffix of directory name (32/64)" )  
@@ -28,6 +30,7 @@ option(BUILD_MINIDJVU "build the minidjvu tools" OFF)
 find_package(JPEG)
 find_package(TIFF)
 find_package(ZLIB)
+find_package(FreeImage)
 
 if(JPEG_FOUND)
 	option(HAVE_JPEG "Define if you have the IJG JPEG library." ON)
@@ -45,6 +48,12 @@ if(ZLIB_FOUND)
 	option(HAVE_ZLIB "Define if you have zlib." ON)
 else()
 	option(HAVE_ZLIB "Define if you have zlib." OFF)
+endif()
+
+if(FreeImage_FOUND)
+	option(HAVE_FREEIMAGE "Define if you have FreeImage." ON)
+else()
+	option(HAVE_FREEIMAGE "Define if you have FreeImage." OFF)
 endif()
 
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
@@ -118,6 +127,12 @@ if(ZLIB_FOUND AND HAVE_ZLIB)
     add_definitions(-DHAVE_ZLIB=1)
 	set(ADDITIONAL_INCLUDES ${ADDITIONAL_INCLUDES} ${ZLIB_INCLUDE_DIRS})
     set(ADDITIONAL_LIBRARIES ${ADDITIONAL_LIBRARIES} ${ZLIB_LIBRARIES})
+endif()
+
+if(FreeImage_FOUND AND HAVE_FREEIMAGE)
+    add_definitions(-DHAVE_FREEIMAGE=1)
+	set(ADDITIONAL_INCLUDES ${ADDITIONAL_INCLUDES} ${FreeImage_INCLUDE_DIRS})
+    set(ADDITIONAL_LIBRARIES ${ADDITIONAL_LIBRARIES} ${FreeImage_LIBRARIES})
 endif()
 
 # ******************************************************************************
