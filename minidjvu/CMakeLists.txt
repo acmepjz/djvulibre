@@ -2,6 +2,7 @@ file(READ "configure.ac" CONFIGURE_AC)
 string(REGEX MATCH "AC_INIT\\(\\[minidjvu\\],\\[[0-9.]+\\]" MDJVU_VERSION ${CONFIGURE_AC})
 string(REGEX REPLACE "^AC_INIT\\(\\[minidjvu\\],\\[([0-9.]+)\\]$" "\\1" MDJVU_VERSION ${MDJVU_VERSION})
 message(STATUS "The version of minidjvu read from configure.ac is: ${MDJVU_VERSION}")
+set(MDJVU_VERSION "${MDJVU_VERSION}+fi_minidjvu-1.1+djvulibre-${DJVULIBRE_VERSION}")
 
 add_definitions(-DMDJVU_VERSION="${MDJVU_VERSION}")
 
