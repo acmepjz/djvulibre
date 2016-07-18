@@ -4,9 +4,6 @@
 
 #pragma once
 
-#if HAVE_FREEIMAGE
-#include "FreeImage.h"
-#endif
 /*
  * 1 - success, 0 - failure
  */
@@ -20,6 +17,7 @@ MDJVU_FUNCTION mdjvu_bitmap_t mdjvu_load_bmp(const char *path, mdjvu_error_t *);
 MDJVU_FUNCTION mdjvu_bitmap_t mdjvu_file_load_bmp(mdjvu_file_t, mdjvu_error_t *);
 
 #if HAVE_FREEIMAGE
+struct FIBITMAP;
 MDJVU_FUNCTION mdjvu_bitmap_t mdjvu_load_fibitmap(const char *path, mdjvu_error_t *);
-MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_file_load_fibitmap(FIBITMAP* dib, mdjvu_error_t *perr);
+MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_file_load_fibitmap(struct FIBITMAP* dib, mdjvu_error_t *perr);
 #endif

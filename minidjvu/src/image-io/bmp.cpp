@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if HAVE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+
 typedef struct {
    uint32 file_size;                  /* File size in bytes          */
    uint32 reserved;
@@ -250,16 +254,6 @@ MDJVU_IMPLEMENT mdjvu_bitmap_t mdjvu_load_bmp(const char *path, mdjvu_error_t *p
 }
 
 #if HAVE_FREEIMAGE
-
-////////////////////////////////////////////////////////////////////////////////
-/**
-FreeImage error handler
-@param fif Format / Plugin responsible for the error
-@param message Error message
-*/
-void FreeImageErrorHandler(FREE_IMAGE_FORMAT fif, const char *message) {
-	printf("\n*** %s Format\n%s ***\n", FreeImage_GetFormatFromFIF(fif), message);
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 

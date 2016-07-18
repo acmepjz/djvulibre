@@ -101,6 +101,12 @@
 #include "Arrays.h"
 #include <stdio.h>
 
+#if HAVE_FREEIMAGE
+struct FreeImageIO;
+struct FIBITMAP;
+struct FIMULTIBITMAP;
+#endif
+
 #ifdef HAVE_NAMESPACES
 namespace DJVU {
 # ifdef NOT_DEFINED // Just to fool emacs c++ mode
@@ -338,6 +344,15 @@ public:
   GNativeString getAsNative(void);
   /** Returns the contents of the file as a GUTF8String */
   GUTF8String getAsUTF8(void);
+
+#if HAVE_FREEIMAGE
+  /** Generic image loader
+
+  @param flag Optional load flag constant
+  @return Returns the loaded dib if successful, returns NULL otherwise
+  */
+  FIBITMAP* fiLoadImage(int flag);
+#endif
 };
 
 inline size_t

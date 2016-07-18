@@ -79,6 +79,10 @@
 # include <io.h>
 #endif
 
+#if HAVE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+
 #ifdef UNIX
 # ifndef HAS_MEMMAP
 #  define HAS_MEMMAP 1
@@ -1306,6 +1310,61 @@ ByteStream::getAsUTF8(void)
   return GUTF8String(buffer);
 }
 
+#if HAVE_FREEIMAGE
+
+static unsigned DLL_CALLCONV
+myReadProc(void *buffer, unsigned size, unsigned count, fi_handle handle) {
+	size_t n = size_t(size)*size_t(count);
+	if (n == 0) return 0;
+	n = reinterpret_cast<ByteStream*>(handle)->readall(buffer, n);
+	return unsigned(n / size_t(size));
+}
+
+static unsigned DLL_CALLCONV
+myWriteProc(void *buffer, unsigned size, unsigned count, fi_handle handle) {
+	size_t n = size_t(size)*size_t(count);
+	if (n == 0) return 0;
+	n = reinterpret_cast<ByteStream*>(handle)->writall(buffer, n);
+	return unsigned(n / size_t(size));
+}
+
+static int DLL_CALLCONV
+mySeekProc(fi_handle handle, long offset, int origin) {
+	return reinterpret_cast<ByteStream*>(handle)->seek(offset, origin, true);
+}
+
+static long DLL_CALLCONV
+myTellProc(fi_handle handle) {
+	return reinterpret_cast<ByteStream*>(handle)->tell();
+}
+
+static const FreeImageIO myFIIO = {
+	myReadProc,
+	myWriteProc,
+	mySeekProc,
+	myTellProc,
+};
+
+FIBITMAP* ByteStream::fiLoadImage(int flag) {
+	FREE_IMAGE_FORMAT fif = FIF_UNKNOWN;
+	// check the file signature and deduce its format
+	// (the second argument is currently not used by FreeImage)
+
+	fif = FreeImage_GetFileTypeFromHandle(const_cast<FreeImageIO*>(&myFIIO), this, 0);
+
+	FIBITMAP* dib;
+
+	// check that the plugin has reading capabilities ...
+	if ((fif != FIF_UNKNOWN) && FreeImage_FIFSupportsReading(fif))
+	{
+		// ok, let's load the file
+		dib = FreeImage_LoadFromHandle(fif, const_cast<FreeImageIO*>(&myFIIO), this, flag);
+	}
+
+	return dib;
+}
+
+#endif
 
 #ifdef HAVE_NAMESPACES
 }

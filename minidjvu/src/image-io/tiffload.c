@@ -10,6 +10,10 @@
 #endif
 #include <minidjvu/minidjvu.h>
 
+#if HAVE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 

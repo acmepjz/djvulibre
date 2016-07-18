@@ -23,6 +23,7 @@ struct FileAndPageNumber {
 };
 
 #if HAVE_FREEIMAGE
+#include <FreeImage.h>
 std::string lastTIFFFileName;
 FIMULTIBITMAP *lastTIFF = NULL;
 #endif

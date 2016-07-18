@@ -76,6 +76,10 @@
 #include "Arrays.h"
 #include "JPEGDecoder.h"
 
+#if HAVE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <math.h>
@@ -468,6 +472,47 @@ read_integer(char &c, ByteStream &bs)
 void 
 GPixmap::init(ByteStream &bs)
 {
+#if HAVE_FREEIMAGE
+	FIBITMAP *dib = bs.fiLoadImage(0);
+	if (dib == NULL)
+		G_THROW("File format unrecognized by FreeImage.");
+
+	{
+		FIBITMAP *dib2 = FreeImage_ConvertTo24Bits(dib);
+		FreeImage_Unload(dib);
+		if (dib2 == NULL) {
+			G_THROW("Failed to convert the bitmap to 24-bit bitmap.");
+		}
+		dib = dib2;
+	}
+
+	// Read image size
+	int acolumns = FreeImage_GetWidth(dib);
+	int arows = FreeImage_GetHeight(dib);
+	init(arows, acolumns, 0);
+
+	// Returns the width of the bitmap in bytes, rounded to the next 32-bit boundary,
+	// also known as "pitch" or "stride" or "scan width".
+	unsigned pitch = FreeImage_GetPitch(dib);
+
+	const unsigned char* bits = (const unsigned char*)FreeImage_GetBits(dib); // the pointer to the 1 pixel
+
+	// Read image data
+	for (int y = 0; y < nrows; y++)
+	{
+		GPixel *p = (*this)[y];
+		const unsigned char *rgb = bits + y*pitch;
+
+		for (int x = 0; x < ncolumns; x++, rgb += 3)
+		{
+			p[x].r = rgb[FI_RGBA_RED];
+			p[x].g = rgb[FI_RGBA_GREEN];
+			p[x].b = rgb[FI_RGBA_BLUE];
+		}
+	}
+
+	FreeImage_Unload(dib);
+#else
   // Read header
   bool raw = false;
   bool grey = false;
@@ -589,6 +634,7 @@ GPixmap::init(ByteStream &bs)
               }
         }
     }
+#endif
 }
 
 
