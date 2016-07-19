@@ -70,6 +70,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if HAVE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+
 // - Author: Leon Bottou, 05/1997
 
 
@@ -297,6 +301,46 @@ void
 GBitmap::init(ByteStream &ref, int aborder)
 {
   GMonitorLock lock(monitor());
+#if HAVE_FREEIMAGE
+	FIBITMAP *dib = ref.fiLoadImage(0);
+	if (dib == NULL)
+		G_THROW("File format unrecognized by FreeImage.");
+
+	{
+		FIBITMAP *dib2 = FreeImage_ConvertToGreyscale(dib);
+		FreeImage_Unload(dib);
+		if (dib2 == NULL) {
+			G_THROW("Failed to convert the bitmap to grayscale bitmap.");
+		}
+		dib = dib2;
+	}
+
+	// Read image size
+	int acolumns = FreeImage_GetWidth(dib);
+	int arows = FreeImage_GetHeight(dib);
+	init(arows, acolumns, aborder);
+
+	// Returns the width of the bitmap in bytes, rounded to the next 32-bit boundary,
+	// also known as "pitch" or "stride" or "scan width".
+	unsigned pitch = FreeImage_GetPitch(dib);
+
+	const unsigned char* bits = (const unsigned char*)FreeImage_GetBits(dib); // the pointer to the 1 pixel
+
+	// Read image data
+	grays = 256;
+	unsigned char *row = bytes_data + border;
+	for (int y = 0; y < nrows; y++) {
+		const unsigned char *rgb = bits + y*pitch;
+
+		for (int x = 0; x < ncolumns; x++) {
+			row[x] = 255 - rgb[x];
+		}
+
+		row += bytes_per_row;
+	}
+
+	FreeImage_Unload(dib);
+#else
   // Get magic number
   char magic[2];
   magic[0] = magic[1] = 0;
@@ -346,6 +390,7 @@ GBitmap::init(ByteStream &ref, int aborder)
         }
     }
   G_THROW( ERR_MSG("GBitmap.bad_format") );
+#endif
 }
 
 void
