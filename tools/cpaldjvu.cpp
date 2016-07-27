@@ -656,29 +656,27 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
   DjVuPalette &pal=*gpal;
   GPixel bgcolor;
   int bgindex = -1;
-  if (! opts.bgwhite)
+  bgindex = pal.compute_pixmap_palette(*ginput, opts.ncolors);
+  if (opts.bgwhite)
     {
-      bgindex = pal.compute_pixmap_palette(*ginput, opts.ncolors);
-      pal.index_to_color(bgindex, bgcolor);
+	  GPixel clr;
+	  pal.index_to_color(bgindex, clr);
+	  int max_luminance = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
+	  for (int i = 0, m = pal.get_count(); i < m; i++) {
+		  pal.index_to_color(i, clr);
+		  int l = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
+		  if (l > max_luminance) {
+			  max_luminance = l;
+			  bgindex = i;
+		  }
+	  }
     }
-  else
-    {
-      bgcolor = GPixel::WHITE;
-      pal.histogram_clear();
-      for (int j=0; j<h; j++)
-        {
-          const GPixel *p = (*ginput)[j];
-          for (int i=0; i<w; i++)
-            if (p[i] != GPixel::WHITE)
-              pal.histogram_add(p[i], 1);
-        }
-      pal.compute_palette(opts.ncolors);
-    }
+  pal.index_to_color(bgindex, bgcolor);
   if (opts.verbose)
     DjVuFormatErrorUTF8( "%s\t%d\t%d\t%d",
                          ERR_MSG("cpaldjvu.quantizied"), 
                          w, h, pal.size());
-  if (opts.verbose && !opts.bgwhite)
+  if (opts.verbose)
     DjVuPrintErrorUTF8("cpaldjvu: background color is #%02x%02x%02x.\n", 
                        bgcolor.r, bgcolor.g, bgcolor.b);
   
@@ -700,8 +698,6 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
       for(x=0;x<w;x++)
         {
           line[x] = pal.color_to_index(row[x]);
-          if (opts.bgwhite && row[x]==GPixel::WHITE)
-            line[x] = bgindex;
         }
       for(x=0;x<w;)
         {
