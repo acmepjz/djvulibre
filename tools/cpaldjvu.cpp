@@ -637,8 +637,78 @@ struct cpaldjvuopts
   int dpi;
   bool verbose;
   bool bgwhite;
+  const char* palette;
 };
 
+const char *
+parse_color_name(const char *s, unsigned char *bgr)
+{
+  static struct { 
+    const char *name; 
+    unsigned char r, g, b; 
+  } stdcols[] = { 
+    {"aqua",    0x00, 0xFF, 0xFF},
+    {"black",   0x00, 0x00, 0x00},
+    {"blue",    0x00, 0x00, 0xFF},
+    {"fuchsia", 0xFF, 0x00, 0xFF},
+    {"gray",    0x80, 0x80, 0x80},
+    {"green",   0x00, 0x80, 0x00},
+    {"lime",    0x00, 0xFF, 0x00},
+    {"maroon",  0x80, 0x00, 0x00},
+    {"navy",    0x00, 0x00, 0x80},
+    {"olive",   0x80, 0x80, 0x00},
+    {"purple",  0x80, 0x00, 0x80},
+    {"red",     0xFF, 0x00, 0x00},
+    {"silver",  0xC0, 0xC0, 0xC0},
+    {"teal",    0x00, 0x80, 0x80},
+    {"white",   0xFF, 0xFF, 0xFF},
+    {"yellow",  0xFF, 0xFF, 0x00},
+    {0}
+  };
+  // potential color names
+  int len = 0;
+  while (s[len] && s[len]!=':' && s[len]!='#')
+    len += 1;
+  GUTF8String name(s, len);
+  name = name.downcase();
+  for (int i=0; stdcols[i].name; i++)
+    if (name == stdcols[i].name)
+      {
+        bgr[0] = stdcols[i].b;
+        bgr[1] = stdcols[i].g;
+        bgr[2] = stdcols[i].r;
+        return s+len;
+      }
+  // potential hex specifications
+  unsigned int r,g,b;
+  if (sscanf(s,"%2x%2x%2x",&r,&g,&b) == 3)
+    {
+      bgr[0] = b;
+      bgr[1] = g;
+      bgr[2] = r;
+      return s+6;
+    }
+  G_THROW("Unrecognized color name");
+  return 0; // win
+}
+
+int
+parse_palette(const char *s, DjVuPalette &pal)
+{
+  int zones = 0;
+  pal.histogram_clear();
+  // zones
+  while (s[0] == '#')
+    {
+      unsigned char bgr[3];
+      s = parse_color_name(s + 1, bgr);
+      pal.histogram_add(bgr, zones == 0 ? 10000 : 1);
+      zones++;
+    }
+  if (s[0])
+    G_THROW("Syntax error in palette specification");
+  return zones;
+}
 
 // -- Compresses low color pixmap.
 void 
@@ -656,21 +726,26 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
   DjVuPalette &pal=*gpal;
   GPixel bgcolor;
   int bgindex = -1;
-  bgindex = pal.compute_pixmap_palette(*ginput, opts.ncolors);
-  if (opts.bgwhite)
-    {
-	  GPixel clr;
-	  pal.index_to_color(bgindex, clr);
-	  int max_luminance = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
-	  for (int i = 0, m = pal.get_count(); i < m; i++) {
-		  pal.index_to_color(i, clr);
-		  int l = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
-		  if (l > max_luminance) {
-			  max_luminance = l;
-			  bgindex = i;
+  if (opts.palette) {
+	  int ncolors = parse_palette(opts.palette, pal);
+	  bgindex = pal.compute_palette(ncolors);
+  } else {
+	  bgindex = pal.compute_pixmap_palette(*ginput, opts.ncolors);
+	  if (opts.bgwhite)
+	  {
+		  GPixel clr;
+		  pal.index_to_color(bgindex, clr);
+		  int max_luminance = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
+		  for (int i = 0, m = pal.get_count(); i < m; i++) {
+			  pal.index_to_color(i, clr);
+			  int l = (clr.r * 2 + clr.g * 9 + clr.b * 5) >> 4;
+			  if (l > max_luminance) {
+				  max_luminance = l;
+				  bgindex = i;
+			  }
 		  }
 	  }
-    }
+  }
   pal.index_to_color(bgindex, bgcolor);
   if (opts.verbose)
     DjVuFormatErrorUTF8( "%s\t%d\t%d\t%d",
@@ -848,10 +923,11 @@ usage()
          "DjVu encoder for images with few colors\n\n"
          "Usage: cpaldjvu [options] <inputppmfile> <outputdjvufile>\n"
          "Options are:\n"
-         "   -colors [2-4096] Maximum number of colors during quantization (default 256).\n"
-         "   -dpi [25-6000]   Resolution written into the output file (default 100).\n"
-         "   -verbose         Displays additional messages.\n"
-         "   -bgwhite         Use the lightest color for background (usually white).\n"
+         "   -colors [2-4096]  Maximum number of colors during quantization (default 256).\n"
+		 "   -palette {#color} Create palette from list of colors (the first one is background).\n"
+         "   -dpi [25-6000]    Resolution written into the output file (default 100).\n"
+         "   -verbose          Displays additional messages.\n"
+         "   -bgwhite          Use the lightest color for background (usually white).\n"
          );
   exit(10);
 }
@@ -874,6 +950,7 @@ main(int argc, const char **argv)
       opts.ncolors = 256;
       opts.verbose = false;
       opts.bgwhite = false;
+      opts.palette = NULL;
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -884,6 +961,10 @@ main(int argc, const char **argv)
               opts.ncolors = strtol(dargv[++i], &end, 10);
               if (*end || opts.ncolors<2 || opts.ncolors>4096)
                 usage();
+            }
+          else if (arg == "-palette" && i+1<argc)
+            {
+              opts.palette = dargv[++i];
             }
           else if (arg == "-dpi" && i+1<argc)
             {
