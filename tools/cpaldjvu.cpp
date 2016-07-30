@@ -167,6 +167,7 @@ public:
   GP<GBitmap> get_bitmap_for_cc(int ccid) const;
   void make_ccids_by_analysis();
   void make_ccs_from_ccids();
+  void erase_tiny_ccs(int tinysize);
   void merge_and_split_ccs(int smallsize, int largesize);
   void sort_in_reading_order(); 
   void erase_cc(int ccid);
@@ -359,6 +360,28 @@ CCImage::make_ccs_from_ccids()
       cc.bb.ymin = ymin;
       cc.bb.xmax = xmax + 1;
       cc.bb.ymax = ymax + 1;
+    }
+}
+
+// Removes ccs which are too small.
+void
+CCImage::erase_tiny_ccs(int tinysize)
+{
+  // ISSUE: HALFTONE DETECTION
+  // We should not remove tiny ccs if they are part of a halftone pattern...
+  for (int i=0; i<ccs.size(); i++)
+    {
+      CC& cc = ccs[i];
+      if (cc.npix <= tinysize)
+        {
+          // Mark cc to be erased
+          Run *r = &runs[cc.frun];
+          int nr = cc.nrun;
+          cc.nrun = 0;
+          cc.npix = 0;
+          while (--nr >= 0)
+            (r++)->ccid = -1;
+        }
     }
 }
 
@@ -638,6 +661,7 @@ struct cpaldjvuopts
   bool verbose;
   bool bgwhite;
   const char* palette;
+  int losslevel;
 };
 
 const char *
@@ -720,6 +744,7 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
   int dpi = MAX(200, MIN(900, opts.dpi));
   int largesize = MIN(500, MAX(64, dpi));
   int smallsize = MAX(2, dpi/150);
+  int tinysize = MAX(0, dpi*dpi/20000 - 1);
 
   // Compute optimal palette and quantize input pixmap
   GP<DjVuPalette> gpal=DjVuPalette::create();
@@ -800,6 +825,8 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
   if (opts.verbose)
     DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cpaldjvu.ccs_before"), 
                          rimg.ccs.size());
+  if (opts.losslevel > 0) 
+    rimg.erase_tiny_ccs(tinysize);       // clean
   rimg.merge_and_split_ccs(smallsize,largesize);  // Eliminates gross ccs
   if (opts.verbose)
     DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cpaldjvu.ccs_after"), 
@@ -831,7 +858,18 @@ cpaldjvu(ByteStream *ibs, GURL &urlout, const cpaldjvuopts &opts)
     }
   
   // Organize JB2Image
-  tune_jb2image_lossless(&jimg);
+  if (opts.losslevel>1)
+    tune_jb2image_lossy(&jimg, opts.dpi, opts.losslevel);
+  else
+    tune_jb2image_lossless(&jimg);
+
+  // debug
+  if (nccs != jimg.get_blit_count()) {
+	  DjVuFormatErrorUTF8("Internal Error: nccs (=%d) is not equal to jimg.get_blit_count() (=%d) after lossy compression.\n"
+		  "Perhaps you should try lossless compression.", nccs, jimg.get_blit_count());
+	  G_THROW("Internal Error");
+  }
+  
   if (opts.verbose)
     {
       int nshape=0, nrefine=0;
@@ -923,11 +961,15 @@ usage()
          "DjVu encoder for images with few colors\n\n"
          "Usage: cpaldjvu [options] <inputppmfile> <outputdjvufile>\n"
          "Options are:\n"
-         "   -colors [2-4096]  Maximum number of colors during quantization (default 256).\n"
-		 "   -palette {#color} Create palette from list of colors (the first one is background).\n"
-         "   -dpi [25-6000]    Resolution written into the output file (default 100).\n"
-         "   -verbose          Displays additional messages.\n"
-         "   -bgwhite          Use the lightest color for background (usually white).\n"
+         "  -colors [2-4096]  Maximum number of colors during quantization (default 256).\n"
+		 "  -palette {#color} Create palette from list of colors (the first one is background).\n"
+         "  -dpi [25-6000]    Resolution written into the output file (default 100).\n"
+         "  -verbose          Displays additional messages.\n"
+         "  -bgwhite          Use the lightest color for background (usually white).\n"
+		 "  -clean            Cleanup image by removing small flyspecks (equivalent to '-losslevel 1')\n"
+         "  -lossy            Lossy compression (equivalent to '-losslevel 100')\n"
+         "  -losslevel <n>    Loss factor\n"
+         "Encoding is lossless unless a lossy options is selected.\n"
          );
   exit(10);
 }
@@ -951,6 +993,7 @@ main(int argc, const char **argv)
       opts.verbose = false;
       opts.bgwhite = false;
       opts.palette = NULL;
+      opts.losslevel = 0;
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -973,6 +1016,19 @@ main(int argc, const char **argv)
               if (*end || opts.dpi<25 || opts.dpi>6000)
                 usage();
             }
+          else if (arg == "-losslevel" && i+1<argc)
+            {
+              char *end;
+              opts.losslevel = strtol(dargv[++i], &end, 10);
+              if (*end || opts.losslevel<0 || opts.losslevel>200)
+                usage();
+            }
+          else if (arg == "-lossless")
+            opts.losslevel = 0;
+          else if (arg == "-lossy")
+            opts.losslevel = 100;
+          else if (arg == "-clean")
+            opts.losslevel = 1;
           else if (arg == "-verbose" || arg == "-v")
             opts.verbose = true;
           else if (arg == "-bgwhite")
