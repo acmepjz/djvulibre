@@ -169,7 +169,8 @@ usage(void)
            "      and <page_num> is the number of the page to be deleted\n"
            "\n"
            "   To list document contents:\n"
-           "      %s -l[ist] <doc.djvu>\n"
+           "      %s -l[ist] <doc.djvu> [-p]\n"
+           "      -p means only list pages\n"
            "\n"
            "Pages being inserted may reference other files by means of INCL chunks.\n"
            "Moreover, files shared between pages will be stored into the document\n"
@@ -248,7 +249,12 @@ list(GArray<GUTF8String> &argv)
       // djvm -l[ist] <doc.djvu>
 {
    const int argc=argv.hbound()+1;
-   if (argc!=3) { usage(); exit(1); }
+   bool page_only = false;
+   if (argc!=3 && argc!=4) { usage(); exit(1); }
+   if (argc == 4) {
+	   if (argv[3].cmp("-p")) { usage(); exit(1); }
+	   page_only = true;
+   }
 
    const GURL::Filename::UTF8 url(argv[2]);
    GP<DjVmDoc> doc=DjVmDoc::create();
@@ -258,33 +264,41 @@ list(GArray<GUTF8String> &argv)
    if (dir)
    {
       GPList<DjVmDir::File> files_list=dir->get_files_list();
-      printf("Size     Type        Name\n");
-      printf("--------------------------\n");
+	  if (!page_only) {
+		  printf("Size     Type        Name\n");
+		  printf("--------------------------\n");
+	  }
       for(GPosition pos=files_list;pos;++pos)
       {
 	 GP<DjVmDir::File> file=files_list[pos];
-	 printf("%6d   ", file->size);
-	 if (file->is_page())
-	 {
-	    char buffer[128];
-	    sprintf(buffer, "PAGE #%d", file->get_page_num()+1);
-	    printf("%s", buffer);
-	    for(int i=strlen(buffer);i<9;i++)
-	       putchar(' ');
-	 } else if (file->is_include())
-         {
-	    printf("%s", "INCLUDE  ");
-	 } else if (file->is_shared_anno())
-         {
-	    printf("%s", "SHARED_ANNO  ");
-	 }else if (file->is_thumbnails())
-         {
-	    printf("%s", "THUMBNAIL");
-	 } else
-         {
-           printf("%s", "UNKNOWN  ");
-         }
-	 printf("   %s\n", (const char *) file->get_save_name());
+	 if (page_only) {
+		 if (file->is_page()) {
+			 printf("%s\n", (const char *)file->get_save_name());
+		 }
+	 } else {
+		 printf("%6d   ", file->size);
+		 if (file->is_page())
+		 {
+			 char buffer[128];
+			 sprintf(buffer, "PAGE #%d", file->get_page_num() + 1);
+			 printf("%s", buffer);
+			 for (int i = strlen(buffer); i < 9; i++)
+				 putchar(' ');
+		 } else if (file->is_include())
+		 {
+			 printf("%s", "INCLUDE  ");
+		 } else if (file->is_shared_anno())
+		 {
+			 printf("%s", "SHARED_ANNO  ");
+		 } else if (file->is_thumbnails())
+		 {
+			 printf("%s", "THUMBNAIL");
+		 } else
+		 {
+			 printf("%s", "UNKNOWN  ");
+		 }
+		 printf("   %s\n", (const char *)file->get_save_name());
+	 }
       }
    }
 }
