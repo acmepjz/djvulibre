@@ -52,26 +52,30 @@ MDJVU_IMPLEMENT int mdjvu_file_save_djvu_page(mdjvu_image_t image, mdjvu_file_t 
     int pos = ftell((FILE *) file);
     if (pos & 1) pos++;
 
-    if (indirect)
-        mdjvu_write_big_endian_int32(MDJVU_IFF_ID("AT&T"), file);
-    FORM = mdjvu_iff_write_chunk(MDJVU_IFF_ID("FORM"), file);
-        mdjvu_write_big_endian_int32(MDJVU_IFF_ID("DJVU"), file);
+	if (indirect)
+		mdjvu_write_big_endian_int32(MDJVU_IFF_ID("AT&T"), file);
+	FORM = mdjvu_iff_write_chunk(MDJVU_IFF_ID("FORM"), file);
+	mdjvu_write_big_endian_int32(MDJVU_IFF_ID("DJVU"), file);
 
-        INFO = mdjvu_iff_write_chunk(MDJVU_IFF_ID("INFO"), file);
-            mdjvu_write_info_chunk(file, image);
-        mdjvu_iff_close_chunk(INFO, file);
+	INFO = mdjvu_iff_write_chunk(MDJVU_IFF_ID("INFO"), file);
+	mdjvu_write_info_chunk(file, image);
+	mdjvu_iff_close_chunk(INFO, file);
 
-        if (dict_name)
-        {
-            INCL = mdjvu_iff_write_chunk(MDJVU_IFF_ID("INCL"), file);
-                fwrite(dict_name, 1, strlen(dict_name), (FILE *) file);
-            mdjvu_iff_close_chunk(INCL, file);
-        }
+	/* new: only add Sjbz chunk if this page is not empty (produces "malformed" DjVu image) */
+	if (mdjvu_image_get_blit_count(image) > 0)
+	{
+		if (dict_name)
+		{
+			INCL = mdjvu_iff_write_chunk(MDJVU_IFF_ID("INCL"), file);
+			fwrite(dict_name, 1, strlen(dict_name), (FILE *) file);
+			mdjvu_iff_close_chunk(INCL, file);
+		}
 
-        Sjbz = mdjvu_iff_write_chunk(MDJVU_IFF_ID("Sjbz"), file);
-            if (!mdjvu_file_save_jb2(image, file, perr, erosion)) return 0;
-        mdjvu_iff_close_chunk(Sjbz, file);
-    mdjvu_iff_close_chunk(FORM, file);
+		Sjbz = mdjvu_iff_write_chunk(MDJVU_IFF_ID("Sjbz"), file);
+		if (!mdjvu_file_save_jb2(image, file, perr, erosion)) return 0;
+		mdjvu_iff_close_chunk(Sjbz, file);
+	}
+	mdjvu_iff_close_chunk(FORM, file);
 
     pos = ftell((FILE *) file) - pos;
     return pos;
