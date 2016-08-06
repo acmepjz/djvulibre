@@ -662,7 +662,8 @@ static void add_filelist(const char* filename) {
 			if (pos != s.npos) s = s.substr(0, pos + 1);
 			else s.clear();
 
-			add_file(s.c_str());
+			if(!s.empty())
+				add_file(s.c_str());
 
 			s.clear();
 

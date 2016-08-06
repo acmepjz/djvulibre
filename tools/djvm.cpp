@@ -133,7 +133,10 @@
 #include "DjVuDocEditor.h"
 #include "GOS.h"
 #include "DjVuMessage.h"
+#include "ByteStream.h"
 #include "common.h"
+
+#include <string>
 
 static const char * progname;
 
@@ -148,7 +151,7 @@ usage(void)
            "\n"
            "Usage:\n"
            "   To compose a multipage document:\n"
-           "      %s -c[reate] <doc.djvu> <page_1.djvu> ... <page_n.djvu>\n"
+           "      %s -c[reate] <doc.djvu> ( <page_n.djvu> | -f <filelist> ) ...\n"
            "      where <doc.djvu> is the name of the BUNDLED document to be\n"
            "      created, <page_n.djvu> are the names of the page files to\n"
            "      be packed together.\n"
@@ -170,12 +173,46 @@ usage(void)
            "\n"
            "   To list document contents:\n"
            "      %s -l[ist] <doc.djvu> [-p]\n"
-           "      -p means only list pages\n"
+           "      -p means only list file name of pages\n"
            "\n"
            "Pages being inserted may reference other files by means of INCL chunks.\n"
            "Moreover, files shared between pages will be stored into the document\n"
            "only once.\n"
            "\n", progname, progname, progname, progname );
+}
+
+static void add_filelist(const GURL& filename, GList<GURL>& list) {
+	GP<ByteStream> f=ByteStream::create(filename,"rb");
+
+	std::string s;
+
+	for (;;) {
+		int c;
+		unsigned char ch;
+		if (f->readall(&ch,1) == 1)
+			c = ch;
+		else
+			c = -1;
+
+		if (c == '\r') continue;
+		else if (c < 0 || c == '\n') {
+			size_t pos = s.find_first_not_of(" \t");
+			if (pos != s.npos) s = s.substr(pos);
+			else s.clear();
+			pos = s.find_last_not_of(" \t");
+			if (pos != s.npos) s = s.substr(0, pos + 1);
+			else s.clear();
+
+			if(!s.empty())
+				list.append(GURL::Filename::UTF8(s.c_str()));
+
+			s.clear();
+
+			if (c < 0) break;
+		} else {
+			s.push_back(c);
+		}
+	}
 }
 
 static void
@@ -191,8 +228,14 @@ create(GArray<GUTF8String> &argv)
 
       // Insert pages
    GList<GURL> list;
-   for(int i=3;i<argc;i++)
-      list.append(GURL::Filename::UTF8(argv[i]));
+   for(int i=3;i<argc;i++) {
+	   if (argv[i].cmp("-f")) {
+		   list.append(GURL::Filename::UTF8(argv[i]));
+	   } else {
+		   if((++i)>=argc) { usage(); exit(1); }
+		   add_filelist(GURL::Filename::UTF8(argv[i]), list);
+	   }
+   }
    doc->insert_group(list);
 
    const GURL::Filename::UTF8 url(argv[2]);
