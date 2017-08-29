@@ -173,7 +173,7 @@ usage(void)
            "\n"
            "   To list document contents:\n"
            "      %s -l[ist] <doc.djvu> [-p]\n"
-           "      -p means only list file name of pages\n"
+		   "      -p: list the file names of pages only\n"
            "\n"
            "Pages being inserted may reference other files by means of INCL chunks.\n"
            "Moreover, files shared between pages will be stored into the document\n"
