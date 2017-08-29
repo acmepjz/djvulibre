@@ -122,6 +122,10 @@
 #include <tiffio.h>
 #endif
 
+#include <stdio.h>
+#include <string>
+#include <vector>
+
 // --------------------------------------------------
 // UTILITIES
 // --------------------------------------------------
@@ -739,13 +743,33 @@ static int mapproc(thandle_t, tdata_t*, toff_t*) {
 static void unmapproc(thandle_t, tdata_t, toff_t) { 
 }
 
+static int get_tiff_page_count(ByteStream *bs) {
+	bs->seek(0);
+	TIFF *tiff = TIFFClientOpen("libtiff", "rm", (thandle_t)bs,
+		readproc, writeproc, seekproc,
+		closeproc, sizeproc,
+		mapproc, unmapproc);
+	int dircount = 0;
+	if (tiff) {
+		do {
+			dircount++;
+		} while (TIFFReadDirectory(tiff));
+		TIFFClose(tiff);
+	}
+	return dircount;
+}
+
+static TIFF* open_tiff(ByteStream *bs) {
+	bs->seek(0);
+	return TIFFClientOpen("libtiff", "rm", (thandle_t)bs,
+		readproc, writeproc, seekproc,
+		closeproc, sizeproc,
+		mapproc, unmapproc);
+}
+
 static void
-read_tiff(CCImage &rimg, ByteStream *bs, cjb2opts &opts)
+read_tiff(CCImage &rimg, TIFF *tiff, cjb2opts &opts)
 {
-  TIFF *tiff = TIFFClientOpen("libtiff", "rm", (thandle_t)bs,
-                              readproc, writeproc, seekproc,
-                              closeproc, sizeproc, 
-                              mapproc, unmapproc );
   // bitonal
   uint16 bps = 0, spp = 0;
   TIFFGetFieldDefaulted(tiff, TIFFTAG_BITSPERSAMPLE, &bps);
@@ -813,8 +837,6 @@ read_tiff(CCImage &rimg, ByteStream *bs, cjb2opts &opts)
       if (c)
         rimg.add_single_run(yy, lastx, w-1);
     }
-  // close
-  TIFFClose(tiff);
 }
 
 #endif // HAVE_TIFF
@@ -869,95 +891,180 @@ GP<JB2Dict> loadDictionary(const GURL& fileName, int recursive = 16) {
 }
 
 void 
-cjb2(const GURL &urlin, const GURL &urlout, cjb2opts &opts)
+cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts)
 {
-  GP<ByteStream> ibs=ByteStream::create(urlin, "rb");
-  CCImage rimg;
+	// Load shared dictionary
+	GP<JB2Dict> dict;
+	if (!opts.dict.is_empty()) {
+		dict = loadDictionary(opts.dict);
+	}
+
+	// get the number of pages
+	int pageno = 0;
+	std::vector<int> pagecounts;
+	for (int i = 0, m = inputlist.size(); i < m; i++) {
+		int pagecount = 0;
+#if HAVE_TIFF
+		GP<ByteStream> ibs = ByteStream::create(inputlist[i], "rb");
+		if (is_tiff(ibs)) {
+			pagecount = get_tiff_page_count(ibs);
+		} else {
+			// assume all non-TIFF files are of single page
+			pagecount = 1;
+		}
+#else
+		// assume all files are of single page
+		pagecount = 1;
+#endif
+		pagecounts.push_back(pagecount);
+		pageno += pagecount;
+	}
+
+	if (pageno <= 0) return; // do nothing
+	
+	bool isMultipage = false;
+	if (pageno > 1) {
+		isMultipage = true;
+		// rename the output file to contain '%d'
+		if (outputname.find_last_of('%') == std::string::npos) {
+			size_t lpe = outputname.find_last_of('.');
+			if (lpe == std::string::npos) {
+				outputname += ".%04d.djvu";
+			} else {
+				outputname = outputname.substr(0, lpe) + ".%04d" + outputname.substr(lpe);
+			}
+		}
+	}
+
+	// for each file
+	pageno = 0;
+	for (int i = 0, m = inputlist.size(); i < m; i++) {
+		int pagecount = pagecounts[i];
+
+		GP<ByteStream> ibs = ByteStream::create(inputlist[i], "rb");
 
 #if HAVE_TIFF
-  if (is_tiff(ibs))
-    read_tiff(rimg, ibs, opts);
-  else
+		TIFF *tiff = 0;
+		if (is_tiff(ibs)) {
+			tiff = open_tiff(ibs);
+		}
 #endif
-    {
-      GP<GBitmap> input=GBitmap::create(*ibs);
-      rimg.init(input->columns(), input->rows(), opts.dpi);
-      rimg.add_bitmap_runs(*input); 
-    }
-  if (opts.verbose)
-    DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cjb2.runs"), 
-                         rimg.runs.size() );
-  
-  // Component analysis
-  rimg.make_ccids_by_analysis(); // obtain ccids
-  rimg.make_ccs_from_ccids();    // compute cc descriptors
-  if (opts.verbose)
-    DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cjb2.ccs_before"), 
-                         rimg.ccs.size());
-  if (opts.losslevel > 0) 
-    rimg.erase_tiny_ccs();       // clean
-  rimg.merge_and_split_ccs();    // reorganize weird ccs
-  rimg.sort_in_reading_order();  // sort cc descriptors
-  if (opts.verbose)
-    DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cjb2.ccs_after"), 
-                         rimg.ccs.size());
-  // Load dictionary
-  GP<JB2Dict> dict;
-  if (!opts.dict.is_empty()) {
-	  dict = loadDictionary(opts.dict);
-  }
-  // Pattern matching
-  GP<JB2Image> jimg = rimg.get_jb2image(dict);      // get ``raw'' jb2image
-  rimg.runs.empty();                                // save memory
-  rimg.ccs.empty();                                 // save memory
-  if (opts.losslevel>1)
-    tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
-  else
-    tune_jb2image_lossless(jimg);
-  if (opts.verbose)
-    {
-      int nshape=0, nrefine=0;
-      for (int i=0; i<jimg->get_shape_count(); i++) {
-        if (!jimg->get_shape(i).bits) continue;
-        if (jimg->get_shape(i).parent >= 0) nrefine++; 
-        nshape++; 
-      }
-      DjVuFormatErrorUTF8( "%s\t%d\t%d", ERR_MSG("cjb2.shapes"), 
-                           nshape, nrefine);
-    }
-  
-  // Code
-  GP<ByteStream> obs=ByteStream::create(urlout, "wb");
-  GP<IFFByteStream> giff=IFFByteStream::create(obs);
-  IFFByteStream &iff=*giff;
-  // -- main composite chunk
-  iff.put_chunk("FORM:DJVU", 1);
-  // -- ``INFO'' chunk
-  GP<DjVuInfo> ginfo=DjVuInfo::create();
-  DjVuInfo &info=*ginfo;
-  info.height = rimg.height;
-  info.width = rimg.width;
-  info.dpi = opts.dpi;
-  iff.put_chunk("INFO");
-  info.encode(*iff.get_bytestream());
-  iff.close_chunk();
-  // -- ``INCL'' chunk
-  if (dict != 0) {
-	  iff.put_chunk("INCL");
-	  GUTF8String fname = opts.dict.fname();
-	  const char* s = fname;
-	  iff.get_bytestream()->writall(s, strlen(s));
-	  iff.close_chunk();
-  }
-  // -- ``Sjbz'' chunk
-  iff.put_chunk("Sjbz");
-  jimg->encode(iff.get_bytestream());
-  iff.close_chunk();
-  // -- terminate main composite chunk
-  iff.close_chunk();
-  // Finished!
+
+		// for each page in the file
+		for (int p = 0; p < pagecount; p++) {
+			CCImage rimg;
+
+			// load the current page
+#if HAVE_TIFF
+			if (tiff) {
+				if (p > 0) {
+					if(!TIFFReadDirectory(tiff)) break;
+				}
+				read_tiff(rimg, tiff, opts);
+			} else
+#endif
+			{
+				GP<GBitmap> input = GBitmap::create(*ibs);
+				rimg.init(input->columns(), input->rows(), opts.dpi);
+				rimg.add_bitmap_runs(*input);
+			}
+			if (opts.verbose)
+				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.runs"),
+				rimg.runs.size());
+
+			pageno++;
+
+			// Component analysis
+			rimg.make_ccids_by_analysis(); // obtain ccids
+			rimg.make_ccs_from_ccids();    // compute cc descriptors
+			if (opts.verbose)
+				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.ccs_before"),
+				rimg.ccs.size());
+			if (opts.losslevel > 0)
+				rimg.erase_tiny_ccs();       // clean
+			rimg.merge_and_split_ccs();    // reorganize weird ccs
+			rimg.sort_in_reading_order();  // sort cc descriptors
+			if (opts.verbose)
+				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.ccs_after"),
+				rimg.ccs.size());
+
+			// Pattern matching
+			GP<JB2Image> jimg = rimg.get_jb2image(dict);      // get ``raw'' jb2image
+			rimg.runs.empty();                                // save memory
+			rimg.ccs.empty();                                 // save memory
+			if (opts.losslevel>1)
+				tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
+			else
+				tune_jb2image_lossless(jimg);
+			if (opts.verbose)
+			{
+				int nshape = 0, nrefine = 0;
+				for (int i = jimg->get_inherited_shape_count(), m = jimg->get_shape_count(); i<m; i++) {
+					if (!jimg->get_shape(i).bits) continue;
+					if (jimg->get_shape(i).parent >= 0) nrefine++;
+					nshape++;
+				}
+				DjVuFormatErrorUTF8("%s\t%d\t%d", ERR_MSG("cjb2.shapes"),
+					nshape, nrefine);
+			}
+
+			// get the output file name
+			GURL urlout;
+			if (isMultipage) {
+				int M = outputname.size() + 1024;
+				char *s = new char[M];
+#ifdef WIN32
+				_snprintf(s, M, outputname.c_str(), pageno);
+#else
+				snprintf(s, M, outputname.c_str(), pageno);
+#endif
+				s[M - 1] = '\0';
+				urlout = GURL::Filename::UTF8(s);
+				delete[] s;
+			} else {
+				urlout = GURL::Filename::UTF8(outputname.c_str());
+			}
+
+			// Code
+			GP<ByteStream> obs = ByteStream::create(urlout, "wb");
+			GP<IFFByteStream> giff = IFFByteStream::create(obs);
+			IFFByteStream &iff = *giff;
+			// -- main composite chunk
+			iff.put_chunk("FORM:DJVU", 1);
+			// -- ``INFO'' chunk
+			GP<DjVuInfo> ginfo = DjVuInfo::create();
+			DjVuInfo &info = *ginfo;
+			info.height = rimg.height;
+			info.width = rimg.width;
+			info.dpi = opts.dpi;
+			iff.put_chunk("INFO");
+			info.encode(*iff.get_bytestream());
+			iff.close_chunk();
+			// -- ``INCL'' chunk
+			if (dict != 0) {
+				iff.put_chunk("INCL");
+				GUTF8String fname = opts.dict.fname();
+				const char* s = fname;
+				iff.get_bytestream()->writall(s, strlen(s));
+				iff.close_chunk();
+			}
+			// -- ``Sjbz'' chunk
+			iff.put_chunk("Sjbz");
+			jimg->encode(iff.get_bytestream());
+			iff.close_chunk();
+			// -- terminate main composite chunk
+			iff.close_chunk();
+			// Finished!
+		}
+
+		// close TIFF page
+#if HAVE_TIFF
+		if (tiff) {
+			TIFFClose(tiff);
+		}
+#endif
+	}
 }
-      
 
 
 
@@ -975,9 +1082,9 @@ usage()
          "CJB2 --- DjVuLibre-" DJVULIBRE_VERSION "\n"
 #endif
          "Simple DjVuBitonal encoder\n\n"
-         "Usage: cjb2 [options] <input-pbm-or-tiff> <output-djvu>\n"
+         "Usage: cjb2 [options] (<input-pbm-or-tiff> | -f <filelist> ) ... <output-djvu>\n"
          "Options are:\n"
-         " -verbose        Display additional messages.\n"
+         " -v, -verbose    Display additional messages.\n"
          " -dpi <n>        Specify image resolution (default 300).\n"
          " -clean          Cleanup image by removing small flyspecks.\n"
          " -lossy          Lossy compression (implies -clean as well)\n"
@@ -987,18 +1094,52 @@ usage()
   exit(10);
 }
 
+static void add_filelist(const GURL& filename, std::vector<GURL>& list) {
+	GP<ByteStream> f = ByteStream::create(filename, "rb");
+
+	std::string s;
+
+	for (;;) {
+		int c;
+		unsigned char ch;
+		if (f->readall(&ch, 1) == 1)
+			c = ch;
+		else
+			c = -1;
+
+		if (c == '\r') continue;
+		else if (c < 0 || c == '\n') {
+			size_t pos = s.find_first_not_of(" \t");
+			if (pos != s.npos) s = s.substr(pos);
+			else s.clear();
+			pos = s.find_last_not_of(" \t");
+			if (pos != s.npos) s = s.substr(0, pos + 1);
+			else s.clear();
+
+			if (!s.empty())
+				list.push_back(GURL::Filename::UTF8(s.c_str()));
+
+			s.clear();
+
+			if (c < 0) break;
+		} else {
+			s.push_back(c);
+		}
+	}
+}
 
 int 
 main(int argc, const char **argv)
 {
   DJVU_LOCALE;
+  if (argc < 3) usage();
   GArray<GUTF8String> dargv(0,argc-1);
   for(int i=0;i<argc;++i)
     dargv[i]=GNativeString(argv[i]);
   G_TRY
     {
-      GURL inputpbmurl;
-      GURL outputdjvuurl;
+	  std::vector<GURL> inputlist;
+	  std::string outputname;
       cjb2opts opts;
       // Defaults
       opts.forcedpi = 0;
@@ -1009,20 +1150,23 @@ main(int argc, const char **argv)
       for (int i=1; i<argc; i++)
         {
           GUTF8String arg = dargv[i];
-          if (arg == "-dpi" && i+1<argc)
-            {
-              char *end;
-              opts.dpi = opts.forcedpi = strtol(dargv[++i], &end, 10);
-              if (*end || opts.dpi<25 || opts.dpi>1200)
-                usage();
-            }
-		  else if (arg == "-dict" && i + 1 < argc)
+          if (arg == "-dpi")
 		  {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.dpi = opts.forcedpi = strtol(dargv[++i], &end, 10);
+			  if (*end || opts.dpi < 25 || opts.dpi>1200)
+				  usage();
+		  }
+		  else if (arg == "-dict")
+		  {
+			  if (i + 1 >= argc) usage();
 			  opts.dict = GURL::Filename::UTF8(dargv[++i]);
 		  }
 		  else if (arg == "-losslevel")
             {
-              char *end;
+			  if (i + 1 >= argc) usage();
+			  char *end;
               opts.losslevel = strtol(dargv[++i], &end, 10);
               if (*end || opts.losslevel<0 || opts.losslevel>200)
                 usage();
@@ -1035,19 +1179,21 @@ main(int argc, const char **argv)
             opts.losslevel = 1;
           else if (arg == "-verbose" || arg == "-v")
             opts.verbose = true;
-          else if (arg[0] == '-' && arg[1])
-            usage();
-          else if (inputpbmurl.is_empty())
-            inputpbmurl = GURL::Filename::UTF8(arg);
-          else if (outputdjvuurl.is_empty())
-            outputdjvuurl = GURL::Filename::UTF8(arg);
-          else
-            usage();
+		  else if (arg == "-f") {
+			  if (i + 1 >= argc) usage();
+			  add_filelist(GURL::Filename::UTF8(dargv[++i]), inputlist);
+		  } else if (arg[0] == '-' && arg[1])
+			  usage();
+		  else if (i == argc - 1) {
+			  outputname = (const char*)arg;
+		  } else {
+			  inputlist.push_back(GURL::Filename::UTF8(arg));
+		  }
         }
-      if (inputpbmurl.is_empty() || outputdjvuurl.is_empty())
-        usage();
+	  if (inputlist.size() == 0 || outputname.length() == 0)
+		  usage();
       // Execute
-      cjb2(inputpbmurl, outputdjvuurl, opts);
+	  cjb2(inputlist, outputname, opts);
     }
   G_CATCH(ex)
     {
