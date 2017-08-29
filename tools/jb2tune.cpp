@@ -184,6 +184,7 @@ compute_matchdata_lossy(JB2Image *jimg, MatchData *lib,
                         int dpi, mdjvu_matcher_options_t options)
 {
   int i;
+  int nshapes0 = jimg->get_inherited_shape_count();
   int nshapes = jimg->get_shape_count();
   // Prepare MatchData
   GTArray<mdjvu_pattern_t> handles(nshapes);
@@ -211,7 +212,7 @@ compute_matchdata_lossy(JB2Image *jimg, MatchData *lib,
     if (handles[i])
       {
         int r = reps[tags[i]];
-        lib[i].match = r;
+        if (i >= nshapes0) lib[i].match = r;
         if (r < 0) 
           reps[tags[i]] = i;
       }
@@ -229,9 +230,10 @@ compute_matchdata_lossy(JB2Image *jimg, MatchData *lib,
 static void 
 tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 {
+  int nshapes0 = jimg->get_inherited_shape_count();
   int nshapes = jimg->get_shape_count();
   // Loop on all shapes
-  for (int current=0; current<nshapes; current++)
+  for (int current=nshapes0; current<nshapes; current++)
     {
       JB2Shape &jshp = jimg->get_shape(current);
       // Process substitutions.

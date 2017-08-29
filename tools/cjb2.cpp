@@ -191,7 +191,7 @@ public:
   void add_single_run(int y, int x1, int x2, int ccid=0);
   void add_bitmap_runs(const GBitmap &bm, int offx=0, int offy=0, int ccid=0);
   GP<GBitmap> get_bitmap_for_cc(int ccid) const;
-  GP<JB2Image> get_jb2image() const;
+  GP<JB2Image> get_jb2image(JB2Dict* dict = 0) const;
   void make_ccids_by_analysis();
   void make_ccs_from_ccids();
   void erase_tiny_ccs();
@@ -648,9 +648,10 @@ CCImage::get_bitmap_for_cc(const int ccid) const
 
 // -- Creates a JB2Image with the remaining components
 GP<JB2Image> 
-CCImage::get_jb2image() const
+CCImage::get_jb2image(JB2Dict *dict) const
 {
   GP<JB2Image> jimg = JB2Image::create();
+  if (dict) jimg->set_inherited_dict(dict);
   jimg->set_dimension(width, height);
   if (runs.hbound() < 0)
     return jimg;
@@ -688,6 +689,7 @@ struct cjb2opts {
   int  forcedpi;
   int  losslevel;
   bool verbose;
+  GURL dict;
 };
 
 #if HAVE_TIFF
@@ -817,6 +819,54 @@ read_tiff(CCImage &rimg, ByteStream *bs, cjb2opts &opts)
 
 #endif // HAVE_TIFF
 
+// Load dictionary recursively
+GP<JB2Dict> loadDictionary(const GURL& fileName, int recursive = 16) {
+	GP<JB2Dict> dict = JB2Dict::create();
+	GP<ByteStream> ibs = ByteStream::create(fileName, "rb");
+	GP<IFFByteStream> iiff = IFFByteStream::create(ibs);
+	GUTF8String chkid;
+	iiff->get_chunk(chkid);
+	if (chkid != "FORM:DJVI") {
+		DjVuFormatErrorUTF8("The file '%s' is not FORM:DJVI file\n", (const char*)fileName);
+	} else {
+		for (;;) {
+			chkid.empty();
+			if (iiff->get_chunk(chkid) == 0 || chkid.length() == 0) {
+				DjVuFormatErrorUTF8("The file '%s' does not contain Djbz chunk\n", (const char*)fileName);
+				break;
+			}
+			if (chkid == "INCL") {
+				if (recursive <= 0) {
+					DjVuFormatErrorUTF8("Maximal recursive count reached; give up\n");
+					break;
+				}
+
+				GP<ByteStream> ibs2 = iiff->get_bytestream();
+				const int M = 1024;
+				int m = ibs2->size();
+				if (m <= 0 || m >= M) {
+					DjVuFormatErrorUTF8("INCL size too big or too small\n");
+					break;
+				}
+				char s[M];
+				ibs2->readall(s, m);
+				s[m] = '\0';
+
+				GP<JB2Dict> dict2 = loadDictionary(GURL::Filename::UTF8(s), recursive - 1);
+				if (dict2) {
+					dict->set_inherited_dict(dict2);
+				} else {
+					break;
+				}
+			} else if (chkid == "Djbz") {
+				dict->decode(iiff->get_bytestream());
+				return dict;
+			}
+			iiff->close_chunk();
+		}
+	}
+	return 0;
+}
 
 void 
 cjb2(const GURL &urlin, const GURL &urlout, cjb2opts &opts)
@@ -851,9 +901,13 @@ cjb2(const GURL &urlin, const GURL &urlout, cjb2opts &opts)
   if (opts.verbose)
     DjVuFormatErrorUTF8( "%s\t%d", ERR_MSG("cjb2.ccs_after"), 
                          rimg.ccs.size());
-  
+  // Load dictionary
+  GP<JB2Dict> dict;
+  if (!opts.dict.is_empty()) {
+	  dict = loadDictionary(opts.dict);
+  }
   // Pattern matching
-  GP<JB2Image> jimg = rimg.get_jb2image();          // get ``raw'' jb2image
+  GP<JB2Image> jimg = rimg.get_jb2image(dict);      // get ``raw'' jb2image
   rimg.runs.empty();                                // save memory
   rimg.ccs.empty();                                 // save memory
   if (opts.losslevel>1)
@@ -887,6 +941,14 @@ cjb2(const GURL &urlin, const GURL &urlout, cjb2opts &opts)
   iff.put_chunk("INFO");
   info.encode(*iff.get_bytestream());
   iff.close_chunk();
+  // -- ``INCL'' chunk
+  if (dict != 0) {
+	  iff.put_chunk("INCL");
+	  GUTF8String fname = opts.dict.fname();
+	  const char* s = fname;
+	  iff.get_bytestream()->writall(s, strlen(s));
+	  iff.close_chunk();
+  }
   // -- ``Sjbz'' chunk
   iff.put_chunk("Sjbz");
   jimg->encode(iff.get_bytestream());
@@ -920,6 +982,7 @@ usage()
          " -clean          Cleanup image by removing small flyspecks.\n"
          " -lossy          Lossy compression (implies -clean as well)\n"
          " -losslevel <n>  Loss factor (implies -lossy, default 100)\n"
+         " -dict <file>    Set dictionary file (experimental)\n"
          "Encoding is lossless unless a lossy options is selected.\n" );
   exit(10);
 }
@@ -953,7 +1016,11 @@ main(int argc, const char **argv)
               if (*end || opts.dpi<25 || opts.dpi>1200)
                 usage();
             }
-          else if (arg == "-losslevel")
+		  else if (arg == "-dict" && i + 1 < argc)
+		  {
+			  opts.dict = GURL::Filename::UTF8(dargv[++i]);
+		  }
+		  else if (arg == "-losslevel")
             {
               char *end;
               opts.losslevel = strtol(dargv[++i], &end, 10);
