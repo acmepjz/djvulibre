@@ -195,7 +195,7 @@ public:
   void add_single_run(int y, int x1, int x2, int ccid=0);
   void add_bitmap_runs(const GBitmap &bm, int offx=0, int offy=0, int ccid=0);
   GP<GBitmap> get_bitmap_for_cc(int ccid) const;
-  GP<JB2Image> get_jb2image(JB2Dict* dict = 0) const;
+  void append_to_jb2image(JB2Image* jimg) const;
   void make_ccids_by_analysis();
   void make_ccs_from_ccids();
   void erase_tiny_ccs();
@@ -650,15 +650,11 @@ CCImage::get_bitmap_for_cc(const int ccid) const
 }
 
 
-// -- Creates a JB2Image with the remaining components
-GP<JB2Image> 
-CCImage::get_jb2image(JB2Dict *dict) const
+// -- Append the remaining components to a JB2Image
+void
+CCImage::append_to_jb2image(JB2Image *jimg) const
 {
-  GP<JB2Image> jimg = JB2Image::create();
-  if (dict) jimg->set_inherited_dict(dict);
-  jimg->set_dimension(width, height);
-  if (runs.hbound() < 0)
-    return jimg;
+  if (runs.hbound() < 0) return;
   if (ccs.hbound() < 0)
     G_THROW("Must first perform a cc analysis");
   // Iterate over CCs
@@ -678,7 +674,7 @@ CCImage::get_jb2image(JB2Dict *dict) const
       shape.bits->compress();
     }
   // Return
-  return jimg;
+  return;
 }
 
 
@@ -694,6 +690,8 @@ struct cjb2opts {
   int  losslevel;
   bool verbose;
   GURL dict;
+  std::string output_dict;
+  int pages_per_dict;
 };
 
 #if HAVE_TIFF
@@ -890,17 +888,292 @@ GP<JB2Dict> loadDictionary(const GURL& fileName, int recursive = 16) {
 	return 0;
 }
 
-void 
-cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts)
+class cjb2 {
+public:
+	cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, cjb2opts &opts_);
+private:
+	int pageno;
+	int dictno;
+	bool isMultipage;
+	bool isMultiDict;
+	cjb2opts &opts;
+	GP<JB2Dict> shared_dict;
+	GP<JB2Image> jimg; // image which contains data of multiple pages
+	std::vector<int> jimg_width;
+	std::vector<int> jimg_height;
+	std::vector<int> jimg_shapes;
+	std::vector<int> jimg_blits;
+	std::string outputname;
+
+	void cjb2_output();
+	GURL get_output_name();
+	GURL get_output_dict_name();
+	void print_tune_result();
+};
+
+GURL cjb2::get_output_name() {
+	GURL urlout;
+	if (isMultipage) {
+		int M = outputname.size() + 1024;
+		char *s = new char[M];
+#ifdef WIN32
+		_snprintf(s, M, outputname.c_str(), pageno);
+#else
+		snprintf(s, M, outputname.c_str(), pageno);
+#endif
+		s[M - 1] = '\0';
+		urlout = GURL::Filename::UTF8(s);
+		delete[] s;
+	} else {
+		urlout = GURL::Filename::UTF8(outputname.c_str());
+	}
+	return urlout;
+}
+
+GURL cjb2::get_output_dict_name() {
+	GURL urlout;
+	if (isMultiDict) {
+		int M = opts.output_dict.size() + 1024;
+		char *s = new char[M];
+#ifdef WIN32
+		_snprintf(s, M, outputname.c_str(), dictno);
+#else
+		snprintf(s, M, outputname.c_str(), dictno);
+#endif
+		s[M - 1] = '\0';
+		urlout = GURL::Filename::UTF8(s);
+		delete[] s;
+	} else {
+		urlout = GURL::Filename::UTF8(opts.output_dict.c_str());
+	}
+	return urlout;
+}
+
+void cjb2::print_tune_result() {
+	if (opts.verbose)
+	{
+		int nshape = 0, nrefine = 0;
+		for (int i = jimg->get_inherited_shape_count(), m = jimg->get_shape_count(); i<m; i++) {
+			if (!jimg->get_shape(i).bits) continue;
+			if (jimg->get_shape(i).parent >= 0) nrefine++;
+			nshape++;
+		}
+		DjVuFormatErrorUTF8("%s\t%d\t%d", ERR_MSG("cjb2.shapes"),
+			nshape, nrefine);
+	}
+}
+
+void cjb2::cjb2_output() {
+	if (!jimg || jimg_width.empty()) return; // do nothing
+
+	// Pattern matching
+	if (opts.losslevel>1)
+		tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
+	else
+		tune_jb2image_lossless(jimg);
+
+	print_tune_result();
+
+	if (opts.pages_per_dict <= 1) { // does not generate dictionary at all
+		jimg->set_dimension(jimg_width[0], jimg_height[0]);
+
+		// get the output file name
+		pageno++;
+		GURL urlout = get_output_name();
+
+		// Code
+		GP<ByteStream> obs = ByteStream::create(urlout, "wb");
+		GP<IFFByteStream> giff = IFFByteStream::create(obs);
+		IFFByteStream &iff = *giff;
+		// -- main composite chunk
+		iff.put_chunk("FORM:DJVU", 1);
+		// -- ``INFO'' chunk
+		GP<DjVuInfo> ginfo = DjVuInfo::create();
+		DjVuInfo &info = *ginfo;
+		info.height = jimg_height[0];
+		info.width = jimg_width[0];
+		info.dpi = opts.dpi;
+		iff.put_chunk("INFO");
+		info.encode(*iff.get_bytestream());
+		iff.close_chunk();
+		if (jimg->get_blit_count() > 0) {
+			// -- ``INCL'' chunk
+			if (shared_dict) {
+				iff.put_chunk("INCL");
+				GUTF8String fname = opts.dict.fname();
+				const char* s = fname;
+				iff.get_bytestream()->writall(s, strlen(s));
+				iff.close_chunk();
+			}
+			// -- ``Sjbz'' chunk
+			iff.put_chunk("Sjbz");
+			jimg->encode(iff.get_bytestream());
+			iff.close_chunk();
+		}
+		// -- terminate main composite chunk
+		iff.close_chunk();
+		// Finished!
+	} else {
+		int shapes0 = jimg->get_inherited_shape_count();
+		int shapes = jimg->get_shape_count();
+		int shapes1 = shapes - shapes0;
+		int shapes0new = 0;
+
+		std::vector<int> shapeFreq, newIndex;
+
+		GP<JB2Dict> newDict = JB2Dict::create();
+		if (shared_dict) newDict->set_inherited_dict(shared_dict);
+
+		if (shapes1 > 0) {
+			// count the frequency
+			shapeFreq.resize(shapes1, 0);
+			newIndex.resize(shapes1, -1);
+			for (int i = 0, m = jimg->get_blit_count(); i < m; i++) {
+				int shapeno = jimg->get_blit(i)->shapeno;
+				if (shapeno >= shapes0 && jimg->get_shape(shapeno).bits) shapeFreq[shapeno - shapes0]++;
+			}
+			for (int i = shapes0; i < shapes; i++) {
+				JB2Shape &shape = jimg->get_shape(i);
+				if (shape.bits) {
+					int shapeno = shape.parent;
+					if (shapeno >= shapes0 && jimg->get_shape(shapeno).bits) shapeFreq[shapeno - shapes0] += 2;
+				}
+			}
+
+			// create the new dictionary, calculate the new index
+			for (int i = 0; i < shapes1; i++) {
+				if (shapeFreq[i] > 1) {
+					JB2Shape shape = jimg->get_shape(shapes0 + i);
+					if (shape.parent >= shapes0) { // relocate
+						if ((shape.parent = newIndex[shape.parent - shapes0]) < 0) {
+							G_THROW("BUG: the new index should be valid");
+						}
+					}
+					newIndex[i] = newDict->add_shape(shape);
+					shapes0new++;
+				}
+			}
+		}
+
+		// save new dictionary
+		dictno++;
+		GURL dictout = get_output_dict_name();
+		{
+			GP<ByteStream> obs = ByteStream::create(dictout, "wb");
+			GP<IFFByteStream> giff = IFFByteStream::create(obs);
+			IFFByteStream &iff = *giff;
+			// -- main composite chunk
+			iff.put_chunk("FORM:DJVI", 1);
+			// -- ``INCL'' chunk
+			if (shared_dict) {
+				iff.put_chunk("INCL");
+				GUTF8String fname = opts.dict.fname();
+				const char* s = fname;
+				iff.get_bytestream()->writall(s, strlen(s));
+				iff.close_chunk();
+			}
+			// -- ``Djbz'' chunk
+			iff.put_chunk("Djbz");
+			newDict->encode(iff.get_bytestream());
+			iff.close_chunk();
+			// -- terminate main composite chunk
+			iff.close_chunk();
+		}
+
+		// for each page
+		int shapeno = shapes0;
+		int blitno = 0;
+		for (int i = 0, m = jimg_width.size(); i < m; i++) {
+			// create new JB2Image
+			GP<JB2Image> jimg2 = JB2Image::create();
+			jimg2->set_inherited_dict(newDict);
+			jimg2->set_dimension(jimg_width[i], jimg_height[i]);
+
+			// calculate the new index for remaining shapes
+			for (int m2 = jimg_shapes[i]; shapeno < m2; shapeno++) {
+				if (shapeFreq[shapeno - shapes0] == 1) {
+					JB2Shape shape = jimg->get_shape(shapeno);
+					if (shape.parent >= shapes0) { // relocate
+						if ((shape.parent = newIndex[shape.parent - shapes0]) < 0) {
+							G_THROW("BUG: the new index should be valid");
+						}
+					}
+					int idx = jimg2->add_shape(shape);
+					if (newIndex[shapeno - shapes0] >= 0) {
+						G_THROW("BUG: the new index should be -1");
+					}
+					newIndex[shapeno - shapes0] = idx;
+				}
+			}
+
+			// put the blits to new JB2Image
+			for (int m2 = jimg_blits[i]; blitno < m2; blitno++) {
+				JB2Blit blit = *jimg->get_blit(blitno);
+				if ((int)blit.shapeno >= shapes0) { // relocate
+					blit.shapeno = newIndex[blit.shapeno - shapes0];
+					if (blit.shapeno < 0) continue;
+				}
+				jimg2->add_blit(blit);
+			}
+
+			// save new file
+			pageno++;
+			GURL urlout = get_output_name();
+			{
+				GP<ByteStream> obs = ByteStream::create(urlout, "wb");
+				GP<IFFByteStream> giff = IFFByteStream::create(obs);
+				IFFByteStream &iff = *giff;
+				// -- main composite chunk
+				iff.put_chunk("FORM:DJVU", 1);
+				// -- ``INFO'' chunk
+				GP<DjVuInfo> ginfo = DjVuInfo::create();
+				DjVuInfo &info = *ginfo;
+				info.height = jimg_height[i];
+				info.width = jimg_width[i];
+				info.dpi = opts.dpi;
+				iff.put_chunk("INFO");
+				info.encode(*iff.get_bytestream());
+				iff.close_chunk();
+				if (jimg2->get_blit_count() > 0) {
+					// -- ``INCL'' chunk
+					iff.put_chunk("INCL");
+					GUTF8String fname = dictout.fname();
+					const char* s = fname;
+					iff.get_bytestream()->writall(s, strlen(s));
+					iff.close_chunk();
+					// -- ``Sjbz'' chunk
+					iff.put_chunk("Sjbz");
+					jimg2->encode(iff.get_bytestream());
+					iff.close_chunk();
+				}
+				// -- terminate main composite chunk
+				iff.close_chunk();
+			}
+		}
+	}
+
+	// erase processed data
+	jimg = 0;
+	jimg_width.clear();
+	jimg_height.clear();
+	jimg_shapes.clear();
+	jimg_blits.clear();
+}
+
+cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, cjb2opts &opts_)
+	: pageno(0)
+	, dictno(0)
+	, isMultipage(false)
+	, isMultiDict(false)
+	, opts(opts_)
+	, outputname(outputname_)
 {
 	// Load shared dictionary
-	GP<JB2Dict> dict;
 	if (!opts.dict.is_empty()) {
-		dict = loadDictionary(opts.dict);
+		shared_dict = loadDictionary(opts.dict);
 	}
 
 	// get the number of pages
-	int pageno = 0;
 	std::vector<int> pagecounts;
 	for (int i = 0, m = inputlist.size(); i < m; i++) {
 		int pagecount = 0;
@@ -921,8 +1194,13 @@ cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts
 	}
 
 	if (pageno <= 0) return; // do nothing
+
+	if (opts.output_dict.empty()) {
+		opts.pages_per_dict = 1;
+	} else {
+		if (opts.pages_per_dict <= 0) opts.pages_per_dict = 0x7FFFFFF0;
+	}
 	
-	bool isMultipage = false;
 	if (pageno > 1) {
 		isMultipage = true;
 		// rename the output file to contain '%d'
@@ -934,15 +1212,32 @@ cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts
 				outputname = outputname.substr(0, lpe) + ".%04d" + outputname.substr(lpe);
 			}
 		}
+
+		if (opts.pages_per_dict > 1 && pageno > opts.pages_per_dict) {
+			// we need multiple dictionaries
+			isMultiDict = true;
+			if (opts.output_dict.find_last_of('%') == std::string::npos) {
+				size_t lpe = opts.output_dict.find_last_of('.');
+				if (lpe == std::string::npos) {
+					opts.output_dict += ".%04d";
+				} else {
+					opts.output_dict = opts.output_dict.substr(0, lpe) + ".%04d" + opts.output_dict.substr(lpe);
+				}
+			}
+		}
 	}
 
-	// for each file
+	// reset counter, etc.
 	pageno = 0;
+	dictno = 0;
+
+	// for each file
 	for (int i = 0, m = inputlist.size(); i < m; i++) {
 		int pagecount = pagecounts[i];
 
 		GP<ByteStream> ibs = ByteStream::create(inputlist[i], "rb");
 
+		// open TIFF file
 #if HAVE_TIFF
 		TIFF *tiff = 0;
 		if (is_tiff(ibs)) {
@@ -972,8 +1267,6 @@ cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts
 				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.runs"),
 				rimg.runs.size());
 
-			pageno++;
-
 			// Component analysis
 			rimg.make_ccids_by_analysis(); // obtain ccids
 			rimg.make_ccs_from_ccids();    // compute cc descriptors
@@ -988,82 +1281,35 @@ cjb2(const std::vector<GURL> &inputlist, std::string &outputname, cjb2opts &opts
 				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.ccs_after"),
 				rimg.ccs.size());
 
-			// Pattern matching
-			GP<JB2Image> jimg = rimg.get_jb2image(dict);      // get ``raw'' jb2image
-			rimg.runs.empty();                                // save memory
-			rimg.ccs.empty();                                 // save memory
-			if (opts.losslevel>1)
-				tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
-			else
-				tune_jb2image_lossless(jimg);
-			if (opts.verbose)
-			{
-				int nshape = 0, nrefine = 0;
-				for (int i = jimg->get_inherited_shape_count(), m = jimg->get_shape_count(); i<m; i++) {
-					if (!jimg->get_shape(i).bits) continue;
-					if (jimg->get_shape(i).parent >= 0) nrefine++;
-					nshape++;
-				}
-				DjVuFormatErrorUTF8("%s\t%d\t%d", ERR_MSG("cjb2.shapes"),
-					nshape, nrefine);
+			// Append to jb2image (assuming tune_jb2image_* doesn't change the order of shapes and blits)
+			if (!jimg) {
+				jimg = JB2Image::create();
+				if (shared_dict) jimg->set_inherited_dict(shared_dict);
 			}
+			rimg.append_to_jb2image(jimg);
+			jimg_width.push_back(rimg.width);
+			jimg_height.push_back(rimg.height);
+			jimg_shapes.push_back(jimg->get_shape_count());
+			jimg_blits.push_back(jimg->get_blit_count());
 
-			// get the output file name
-			GURL urlout;
-			if (isMultipage) {
-				int M = outputname.size() + 1024;
-				char *s = new char[M];
-#ifdef WIN32
-				_snprintf(s, M, outputname.c_str(), pageno);
-#else
-				snprintf(s, M, outputname.c_str(), pageno);
-#endif
-				s[M - 1] = '\0';
-				urlout = GURL::Filename::UTF8(s);
-				delete[] s;
-			} else {
-				urlout = GURL::Filename::UTF8(outputname.c_str());
-			}
+			// save memory
+			rimg.runs.empty();
+			rimg.ccs.empty();
 
-			// Code
-			GP<ByteStream> obs = ByteStream::create(urlout, "wb");
-			GP<IFFByteStream> giff = IFFByteStream::create(obs);
-			IFFByteStream &iff = *giff;
-			// -- main composite chunk
-			iff.put_chunk("FORM:DJVU", 1);
-			// -- ``INFO'' chunk
-			GP<DjVuInfo> ginfo = DjVuInfo::create();
-			DjVuInfo &info = *ginfo;
-			info.height = rimg.height;
-			info.width = rimg.width;
-			info.dpi = opts.dpi;
-			iff.put_chunk("INFO");
-			info.encode(*iff.get_bytestream());
-			iff.close_chunk();
-			// -- ``INCL'' chunk
-			if (dict != 0) {
-				iff.put_chunk("INCL");
-				GUTF8String fname = opts.dict.fname();
-				const char* s = fname;
-				iff.get_bytestream()->writall(s, strlen(s));
-				iff.close_chunk();
-			}
-			// -- ``Sjbz'' chunk
-			iff.put_chunk("Sjbz");
-			jimg->encode(iff.get_bytestream());
-			iff.close_chunk();
-			// -- terminate main composite chunk
-			iff.close_chunk();
-			// Finished!
+			// Check if we need to output result
+			if ((int)jimg_width.size() >= opts.pages_per_dict) cjb2_output();
 		}
 
-		// close TIFF page
+		// close TIFF file
 #if HAVE_TIFF
 		if (tiff) {
 			TIFFClose(tiff);
 		}
 #endif
 	}
+
+	// Output remaining result
+	cjb2_output();
 }
 
 
@@ -1089,7 +1335,11 @@ usage()
          " -clean          Cleanup image by removing small flyspecks.\n"
          " -lossy          Lossy compression (implies -clean as well)\n"
          " -losslevel <n>  Loss factor (implies -lossy, default 100)\n"
-         " -dict <file>    Set dictionary file (experimental)\n"
+         " -dict <file>    Set input dictionary file (experimental)\n"
+		 " -output-dict <file>\n"
+		 "                 Generate dictionary for multipage encoding (experimental)\n"
+		 " -p <n>, -pages-per-dict <n>\n"
+		 "                 Pages per dictionary (default 10, 0=all)\n"
          "Encoding is lossless unless a lossy options is selected.\n" );
   exit(10);
 }
@@ -1146,6 +1396,7 @@ main(int argc, const char **argv)
       opts.dpi = 300;
       opts.losslevel = 0;
       opts.verbose = false;
+	  opts.pages_per_dict = 10;
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -1179,7 +1430,17 @@ main(int argc, const char **argv)
             opts.losslevel = 1;
           else if (arg == "-verbose" || arg == "-v")
             opts.verbose = true;
-		  else if (arg == "-f") {
+		  else if (arg == "-pages-per-dict" || arg == "-p")
+		  {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.pages_per_dict = strtol(dargv[++i], &end, 10);
+			  if (*end) usage();
+		  } else if (arg == "-output-dict")
+		  {
+			  if (i + 1 >= argc) usage();
+			  opts.output_dict = (const char*)dargv[++i];
+		  } else if (arg == "-f") {
 			  if (i + 1 >= argc) usage();
 			  add_filelist(GURL::Filename::UTF8(dargv[++i]), inputlist);
 		  } else if (arg[0] == '-' && arg[1])
