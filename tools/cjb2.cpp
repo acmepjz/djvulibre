@@ -847,17 +847,17 @@ GP<JB2Dict> loadDictionary(const GURL& fileName, int recursive = 16) {
 	GUTF8String chkid;
 	iiff->get_chunk(chkid);
 	if (chkid != "FORM:DJVI") {
-		DjVuFormatErrorUTF8("The file '%s' is not FORM:DJVI file\n", (const char*)fileName);
+		DjVuFormatErrorUTF8("The file '%s' is not FORM:DJVI file", (const char*)fileName);
 	} else {
 		for (;;) {
 			chkid.empty();
 			if (iiff->get_chunk(chkid) == 0 || chkid.length() == 0) {
-				DjVuFormatErrorUTF8("The file '%s' does not contain Djbz chunk\n", (const char*)fileName);
+				DjVuFormatErrorUTF8("The file '%s' does not contain Djbz chunk", (const char*)fileName);
 				break;
 			}
 			if (chkid == "INCL") {
 				if (recursive <= 0) {
-					DjVuFormatErrorUTF8("Maximal recursive count reached; give up\n");
+					DjVuFormatErrorUTF8("Maximal recursive count reached; give up");
 					break;
 				}
 
@@ -865,7 +865,7 @@ GP<JB2Dict> loadDictionary(const GURL& fileName, int recursive = 16) {
 				const int M = 1024;
 				int m = ibs2->size();
 				if (m <= 0 || m >= M) {
-					DjVuFormatErrorUTF8("INCL size too big or too small\n");
+					DjVuFormatErrorUTF8("INCL size too big or too small");
 					break;
 				}
 				char s[M];
@@ -967,14 +967,22 @@ void cjb2::cjb2_output() {
 	if (!jimg || jimg_width.empty()) return; // do nothing
 
 	// Pattern matching
+#ifdef WIN32
+	unsigned int tickCount = GetTickCount();
+#endif
 	if (opts.losslevel>1)
 		tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
 	else
 		tune_jb2image_lossless(jimg);
 
 	print_tune_result();
+#ifdef WIN32
+	if (opts.verbose) {
+		DjVuFormatErrorUTF8("Time: %dms.", GetTickCount() - tickCount);
+	}
+#endif
 
-	if (opts.pages_per_dict <= 1) { // does not generate dictionary at all
+	if (opts.pages_per_dict <= 1 || jimg_width.size() <= 1) { // does not generate dictionary at all
 		jimg->set_dimension(jimg_width[0], jimg_height[0]);
 
 		// get the output file name
@@ -1017,7 +1025,7 @@ void cjb2::cjb2_output() {
 		int shapes0 = jimg->get_inherited_shape_count();
 		int shapes = jimg->get_shape_count();
 		int shapes1 = shapes - shapes0;
-		int shapes0new = 0;
+		//int shapes0new = 0; //unused
 
 		std::vector<int> shapeFreq, newIndex;
 
@@ -1050,9 +1058,14 @@ void cjb2::cjb2_output() {
 						}
 					}
 					newIndex[i] = newDict->add_shape(shape);
-					shapes0new++;
+					//shapes0new++; //unused
 				}
 			}
+		}
+
+		// print some info
+		if (opts.verbose) {
+			DjVuFormatErrorUTF8("Dictionary size: %d (%d nested)", newDict->get_shape_count(), newDict->get_inherited_shape_count());
 		}
 
 		// save new dictionary
@@ -1084,12 +1097,12 @@ void cjb2::cjb2_output() {
 		int shapeno = shapes0;
 		int blitno = 0;
 		for (int i = 0, m = jimg_width.size(); i < m; i++) {
-			// create new JB2Image
+			// create new JB2Image for the current page
 			GP<JB2Image> jimg2 = JB2Image::create();
 			jimg2->set_inherited_dict(newDict);
 			jimg2->set_dimension(jimg_width[i], jimg_height[i]);
 
-			// calculate the new index for remaining shapes
+			// calculate the new index for remaining shapes in the current page
 			for (int m2 = jimg_shapes[i]; shapeno < m2; shapeno++) {
 				if (shapeFreq[shapeno - shapes0] == 1) {
 					JB2Shape shape = jimg->get_shape(shapeno);
@@ -1114,6 +1127,11 @@ void cjb2::cjb2_output() {
 					if (blit.shapeno < 0) continue;
 				}
 				jimg2->add_blit(blit);
+			}
+
+			// print some info
+			if (opts.verbose) {
+				DjVuFormatErrorUTF8("Page %d: %d shapes not in dictionary", pageno + 1, jimg2->get_shape_count() - jimg2->get_inherited_shape_count());
 			}
 
 			// save new file
