@@ -936,9 +936,9 @@ GURL cjb2::get_output_dict_name() {
 		int M = opts.output_dict.size() + 1024;
 		char *s = new char[M];
 #ifdef WIN32
-		_snprintf(s, M, outputname.c_str(), dictno);
+		_snprintf(s, M, opts.output_dict.c_str(), dictno);
 #else
-		snprintf(s, M, outputname.c_str(), dictno);
+		snprintf(s, M, opts.output_dict.c_str(), dictno);
 #endif
 		s[M - 1] = '\0';
 		urlout = GURL::Filename::UTF8(s);
