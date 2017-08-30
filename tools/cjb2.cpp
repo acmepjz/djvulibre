@@ -1281,23 +1281,32 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 				rimg.init(input->columns(), input->rows(), opts.dpi);
 				rimg.add_bitmap_runs(*input);
 			}
-			if (opts.verbose)
-				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.runs"),
-				rimg.runs.size());
 
-			// Component analysis
-			rimg.make_ccids_by_analysis(); // obtain ccids
-			rimg.make_ccs_from_ccids();    // compute cc descriptors
-			if (opts.verbose)
-				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.ccs_before"),
-				rimg.ccs.size());
-			if (opts.losslevel > 0)
-				rimg.erase_tiny_ccs();       // clean
-			rimg.merge_and_split_ccs();    // reorganize weird ccs
-			rimg.sort_in_reading_order();  // sort cc descriptors
-			if (opts.verbose)
-				DjVuFormatErrorUTF8("%s\t%d", ERR_MSG("cjb2.ccs_after"),
-				rimg.ccs.size());
+			{
+				// collect infomation
+				const int rimg_runs = rimg.runs.size();
+
+				// Component analysis
+				rimg.make_ccids_by_analysis(); // obtain ccids
+				rimg.make_ccs_from_ccids();    // compute cc descriptors
+
+				// collect information
+				const int ccs_before = rimg.ccs.size();
+
+				if (opts.losslevel > 0)
+					rimg.erase_tiny_ccs();       // clean
+				rimg.merge_and_split_ccs();    // reorganize weird ccs
+				rimg.sort_in_reading_order();  // sort cc descriptors
+
+				// collect information
+				const int ccs_after = rimg.ccs.size();
+
+				// print information
+				if (opts.verbose) {
+					DjVuFormatErrorUTF8("cjb2: %d runs, %d ccs, %d after cleaning, merging & splitting.",
+						rimg_runs, ccs_before, ccs_after);
+				}
+			}
 
 			// Append to jb2image (assuming tune_jb2image_* doesn't change the order of shapes and blits)
 			if (!jimg) {
