@@ -113,6 +113,7 @@
 #include "GBitmap.h"
 #include "JB2Image.h"
 #include "DjVuInfo.h"
+#include "DjVmDir.h"
 #include "GOS.h"
 #include "GURL.h"
 #include "DjVuMessage.h"
@@ -690,7 +691,7 @@ struct cjb2opts {
   int  losslevel;
   bool verbose;
   GURL dict;
-  std::string output_dict;
+  std::string output_dict; // dictionary name with '%d'
   int pages_per_dict;
 };
 
@@ -903,7 +904,8 @@ private:
 	std::vector<int> jimg_height;
 	std::vector<int> jimg_shapes;
 	std::vector<int> jimg_blits;
-	std::string outputname;
+	std::string outputname; // output name with '%d'
+	GP<DjVmDir> djvmdir;
 
 	void cjb2_output();
 	GURL get_output_name();
@@ -988,6 +990,7 @@ void cjb2::cjb2_output() {
 		// get the output file name
 		pageno++;
 		GURL urlout = get_output_name();
+		djvmdir->insert_file(DjVmDir::File::create(urlout.fname(), "", "", DjVmDir::File::PAGE));
 
 		// Code
 		GP<ByteStream> obs = ByteStream::create(urlout, "wb");
@@ -1071,6 +1074,7 @@ void cjb2::cjb2_output() {
 		// save new dictionary
 		dictno++;
 		GURL dictout = get_output_dict_name();
+		djvmdir->insert_file(DjVmDir::File::create(dictout.fname(), "", "", DjVmDir::File::INCLUDE));
 		{
 			GP<ByteStream> obs = ByteStream::create(dictout, "wb");
 			GP<IFFByteStream> giff = IFFByteStream::create(obs);
@@ -1137,6 +1141,7 @@ void cjb2::cjb2_output() {
 			// save new file
 			pageno++;
 			GURL urlout = get_output_name();
+			djvmdir->insert_file(DjVmDir::File::create(urlout.fname(), "", "", DjVmDir::File::PAGE));
 			{
 				GP<ByteStream> obs = ByteStream::create(urlout, "wb");
 				GP<IFFByteStream> giff = IFFByteStream::create(obs);
@@ -1218,6 +1223,8 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 	} else {
 		if (opts.pages_per_dict <= 0) opts.pages_per_dict = 0x7FFFFFF0;
 	}
+
+	djvmdir = DjVmDir::create();
 	
 	if (pageno > 1) {
 		isMultipage = true;
@@ -1337,6 +1344,26 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 
 	// Output remaining result
 	cjb2_output();
+
+	// save the index file
+	if (isMultipage) {
+		GP<ByteStream> obs = ByteStream::create(GURL::Filename::UTF8(outputname_.c_str()), "wb");
+		GP<IFFByteStream> giff = IFFByteStream::create(obs);
+		IFFByteStream &iff = *giff;
+		// -- main composite chunk
+		iff.put_chunk("FORM:DJVM", 1);
+		// -- ``DIRM'' chunk
+		GP<DjVuInfo> ginfo = DjVuInfo::create();
+		DjVuInfo &info = *ginfo;
+		info.height = jimg_height[0];
+		info.width = jimg_width[0];
+		info.dpi = opts.dpi;
+		iff.put_chunk("DIRM");
+		djvmdir->encode(iff.get_bytestream(), false, false);
+		// -- terminate main composite chunk
+		iff.close_chunk();
+		// Finished!
+	}
 }
 
 
