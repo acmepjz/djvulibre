@@ -693,6 +693,7 @@ struct cjb2opts {
   GURL dict;
   std::string output_dict; // dictionary name with '%d'
   int pages_per_dict;
+  bool no_clean;
 };
 
 #if HAVE_TIFF
@@ -1300,7 +1301,7 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 				// collect information
 				const int ccs_before = rimg.ccs.size();
 
-				if (opts.losslevel > 0)
+				if (opts.losslevel > 0 && !opts.no_clean)
 					rimg.erase_tiny_ccs();       // clean
 				rimg.merge_and_split_ccs();    // reorganize weird ccs
 				rimg.sort_in_reading_order();  // sort cc descriptors
@@ -1385,10 +1386,12 @@ usage()
          "Usage: cjb2 [options] (<input-pbm-or-tiff> | -f <filelist> ) ... <output-djvu>\n"
          "Options are:\n"
          " -v, -verbose    Display additional messages.\n"
-         " -dpi <n>        Specify image resolution (default 300).\n"
+         " -dpi <n>        Specify image resolution (25-1200, default 300).\n"
          " -clean          Cleanup image by removing small flyspecks.\n"
-         " -lossy          Lossy compression (implies -clean as well)\n"
-         " -losslevel <n>  Loss factor (implies -lossy, default 100)\n"
+		 " -no-clean       Don't cleanup during lossy compression.\n"
+         " -lossy          Lossy compression (equivalent to -losslevel 100,\n"
+		 "                                    implies -clean as well)\n"
+		 " -losslevel <n>  Lossy compression with custom lossy factor (0-200)\n"
          " -dict <file>    Set input dictionary file (experimental)\n"
 		 " -output-dict <file>\n"
 		 "                 Generate dictionary for multipage encoding (experimental)\n"
@@ -1451,6 +1454,7 @@ main(int argc, const char **argv)
       opts.losslevel = 0;
       opts.verbose = false;
 	  opts.pages_per_dict = 10;
+	  opts.no_clean = false;
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -1482,8 +1486,10 @@ main(int argc, const char **argv)
             opts.losslevel = 100;
           else if (arg == "-clean") // almost deprecated
             opts.losslevel = 1;
-          else if (arg == "-verbose" || arg == "-v")
-            opts.verbose = true;
+		  else if (arg == "-no-clean")
+			  opts.no_clean = true;
+		  else if (arg == "-verbose" || arg == "-v")
+			  opts.verbose = true;
 		  else if (arg == "-pages-per-dict" || arg == "-p")
 		  {
 			  if (i + 1 >= argc) usage();
