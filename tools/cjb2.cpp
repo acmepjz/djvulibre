@@ -694,6 +694,7 @@ struct cjb2opts {
   std::string output_dict; // dictionary name with '%d'
   int pages_per_dict;
   bool no_clean;
+  bool bundled;
 };
 
 #if HAVE_TIFF
@@ -906,7 +907,9 @@ private:
 	std::vector<int> jimg_shapes;
 	std::vector<int> jimg_blits;
 	std::string outputname; // output name with '%d'
-	GP<DjVmDir> djvmdir;
+	GP<ByteStream> multipageBS;
+	GP<IFFByteStream> multipageIFF;
+	std::vector<int> offsets; // (absolute) offset of each file
 
 	void cjb2_output();
 	GURL get_output_name();
@@ -985,20 +988,27 @@ void cjb2::cjb2_output() {
 	}
 #endif
 
-	if (opts.pages_per_dict <= 1 || jimg_width.size() <= 1) { // does not generate dictionary at all
+	if (opts.pages_per_dict <= 1 || jimg_width.size() <= 1) { // don't generate dictionary if there is only one page left
 		jimg->set_dimension(jimg_width[0], jimg_height[0]);
 
-		// get the output file name
+		GP<ByteStream> obs;
+		GP<IFFByteStream> giff;
+
 		pageno++;
-		GURL urlout = get_output_name();
-		djvmdir->insert_file(DjVmDir::File::create(urlout.fname(), "", "", DjVmDir::File::PAGE));
+		if (multipageBS) {
+			offsets.push_back(multipageBS->tell());
+			giff = multipageIFF;
+		} else {
+			offsets.push_back(0);
+			GURL urlout = get_output_name();
+			obs = ByteStream::create(urlout, "wb");
+			giff = IFFByteStream::create(obs);
+		}
 
 		// Code
-		GP<ByteStream> obs = ByteStream::create(urlout, "wb");
-		GP<IFFByteStream> giff = IFFByteStream::create(obs);
 		IFFByteStream &iff = *giff;
 		// -- main composite chunk
-		iff.put_chunk("FORM:DJVU", 1);
+		iff.put_chunk("FORM:DJVU", multipageBS ? 0 : 1);
 		// -- ``INFO'' chunk
 		GP<DjVuInfo> ginfo = DjVuInfo::create();
 		DjVuInfo &info = *ginfo;
@@ -1075,13 +1085,22 @@ void cjb2::cjb2_output() {
 		// save new dictionary
 		dictno++;
 		GURL dictout = get_output_dict_name();
-		djvmdir->insert_file(DjVmDir::File::create(dictout.fname(), "", "", DjVmDir::File::INCLUDE));
 		{
-			GP<ByteStream> obs = ByteStream::create(dictout, "wb");
-			GP<IFFByteStream> giff = IFFByteStream::create(obs);
+			GP<ByteStream> obs;
+			GP<IFFByteStream> giff;
+
+			if (multipageBS) {
+				offsets.push_back(multipageBS->tell());
+				giff = multipageIFF;
+			} else {
+				offsets.push_back(0);
+				obs = ByteStream::create(dictout, "wb");
+				giff = IFFByteStream::create(obs);
+			}
+
 			IFFByteStream &iff = *giff;
 			// -- main composite chunk
-			iff.put_chunk("FORM:DJVI", 1);
+			iff.put_chunk("FORM:DJVI", multipageBS ? 0 : 1);
 			// -- ``INCL'' chunk
 			if (shared_dict) {
 				iff.put_chunk("INCL");
@@ -1140,15 +1159,24 @@ void cjb2::cjb2_output() {
 			}
 
 			// save new file
-			pageno++;
-			GURL urlout = get_output_name();
-			djvmdir->insert_file(DjVmDir::File::create(urlout.fname(), "", "", DjVmDir::File::PAGE));
 			{
-				GP<ByteStream> obs = ByteStream::create(urlout, "wb");
-				GP<IFFByteStream> giff = IFFByteStream::create(obs);
+				GP<ByteStream> obs;
+				GP<IFFByteStream> giff;
+
+				pageno++;
+				if (multipageBS) {
+					offsets.push_back(multipageBS->tell());
+					giff = multipageIFF;
+				} else {
+					offsets.push_back(0);
+					GURL urlout = get_output_name();
+					obs = ByteStream::create(urlout, "wb");
+					giff = IFFByteStream::create(obs);
+				}
+
 				IFFByteStream &iff = *giff;
 				// -- main composite chunk
-				iff.put_chunk("FORM:DJVU", 1);
+				iff.put_chunk("FORM:DJVU", multipageBS ? 0 : 1);
 				// -- ``INFO'' chunk
 				GP<DjVuInfo> ginfo = DjVuInfo::create();
 				DjVuInfo &info = *ginfo;
@@ -1225,9 +1253,9 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 		if (opts.pages_per_dict <= 0) opts.pages_per_dict = 0x7FFFFFF0;
 	}
 
-	djvmdir = DjVmDir::create();
-	
-	if (pageno > 1) {
+	const int pageCount = pageno;
+
+	if (pageCount > 1) {
 		isMultipage = true;
 		// rename the output file to contain '%d'
 		if (outputname.find_last_of('%') == std::string::npos) {
@@ -1239,7 +1267,7 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 			}
 		}
 
-		if (opts.pages_per_dict > 1 && pageno > opts.pages_per_dict) {
+		if (opts.pages_per_dict > 1 && pageCount > opts.pages_per_dict + 1) {
 			// we need multiple dictionaries
 			isMultiDict = true;
 			if (opts.output_dict.find_last_of('%') == std::string::npos) {
@@ -1250,6 +1278,12 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 					opts.output_dict = opts.output_dict.substr(0, lpe) + ".%04d" + opts.output_dict.substr(lpe);
 				}
 			}
+		}
+
+		// create a memory file for bundled mode
+		if (opts.bundled) {
+			multipageBS = ByteStream::create();
+			multipageIFF = IFFByteStream::create(multipageBS);
 		}
 	}
 
@@ -1348,22 +1382,79 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 
 	// save the index file
 	if (isMultipage) {
+		// get EOF
+		offsets.push_back(multipageBS ? multipageBS->tell() : 0);
+
+		// generate a dummy DIRM chunk
+		GP<DjVmDir> djvmdir = DjVmDir::create();
+
+		int i = 0;
+		int dictCounter = 0;
+		dictno = 0;
+		for (pageno = 1; pageno <= pageCount; pageno++) {
+			GP<DjVmDir::File> f;
+
+			if (dictCounter <= 0 && opts.pages_per_dict > 1 && pageno < pageCount) {
+				// insert a new dictionary
+				dictno++;
+				dictCounter = opts.pages_per_dict;
+				f = DjVmDir::File::create(get_output_dict_name().fname(), "", "", DjVmDir::File::INCLUDE);
+				if ((++i) >= (int)offsets.size()) break;
+				f->size = offsets[i] - ((offsets[i - 1] + 1) & ~1);
+				f->offset = 2; // dummy
+				djvmdir->insert_file(f);
+			}
+			dictCounter--;
+
+			// insert a new page
+			f = DjVmDir::File::create(get_output_name().fname(), "", "", DjVmDir::File::PAGE);
+			if ((++i) >= (int)offsets.size()) break;
+			f->size = offsets[i] - ((offsets[i - 1] + 1) & ~1);
+			f->offset = 2; // dummy
+			djvmdir->insert_file(f);
+		}
+
+		// sanity check
+		if (djvmdir->get_files_num() != (int)offsets.size() - 1) {
+			G_THROW("BUG: File count in DIRM chunk differs from files actually saved");
+		}
+
+		// create the main file
 		GP<ByteStream> obs = ByteStream::create(GURL::Filename::UTF8(outputname_.c_str()), "wb");
-		GP<IFFByteStream> giff = IFFByteStream::create(obs);
-		IFFByteStream &iff = *giff;
-		// -- main composite chunk
-		iff.put_chunk("FORM:DJVM", 1);
-		// -- ``DIRM'' chunk
-		GP<DjVuInfo> ginfo = DjVuInfo::create();
-		DjVuInfo &info = *ginfo;
-		info.height = jimg_height[0];
-		info.width = jimg_width[0];
-		info.dpi = opts.dpi;
-		iff.put_chunk("DIRM");
-		djvmdir->encode(iff.get_bytestream(), false, false);
-		// -- terminate main composite chunk
-		iff.close_chunk();
-		// Finished!
+		{
+			GP<IFFByteStream> oiff = IFFByteStream::create(obs);
+			// -- main composite chunk
+			oiff->put_chunk("FORM:DJVM", 1);
+			// -- ``DIRM'' chunk
+			oiff->put_chunk("DIRM");
+			djvmdir->encode(oiff->get_bytestream(), opts.bundled, false);
+			oiff->close_chunk();
+			oiff->close_chunk();
+		}
+
+		// -- write remaining data
+		if (multipageBS) {
+			multipageIFF = GP<IFFByteStream>();
+
+			if (obs->tell() & 1) obs->write8(0); // perform 2-byte align
+			int offset0 = obs->tell();
+			if (offset0 & 1) {
+				G_THROW("BUG: offset should be even");
+			}
+			multipageBS->seek(0);
+			obs->copy(*multipageBS); // copy remaining data
+			multipageBS = 0;
+
+			// patch file size
+			const int filesize = obs->tell();
+			obs->seek(8);
+			obs->write32(filesize - 12);
+
+			// patch offsets
+			obs->seek(27);
+			for (int i = 0, m = offsets.size() - 1; i < m; i++)
+				obs->write32((offset0 + offsets[i] + 1) & ~1);
+		}
 	}
 }
 
@@ -1397,6 +1488,7 @@ usage()
 		 "                 Generate dictionary for multipage encoding (experimental)\n"
 		 " -p <n>, -pages-per-dict <n>\n"
 		 "                 Pages per dictionary (default 10, 0=all)\n"
+		 " -b, -bundled    Create bundled document for multipage encoding\n"
          "Encoding is lossless unless a lossy options is selected.\n" );
   exit(10);
 }
@@ -1455,6 +1547,7 @@ main(int argc, const char **argv)
       opts.verbose = false;
 	  opts.pages_per_dict = 10;
 	  opts.no_clean = false;
+	  opts.bundled = false;
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -1490,6 +1583,8 @@ main(int argc, const char **argv)
 			  opts.no_clean = true;
 		  else if (arg == "-verbose" || arg == "-v")
 			  opts.verbose = true;
+		  else if (arg == "-bundled" || arg == "-b")
+			  opts.bundled = true;
 		  else if (arg == "-pages-per-dict" || arg == "-p")
 		  {
 			  if (i + 1 >= argc) usage();
