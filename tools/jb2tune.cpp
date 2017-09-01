@@ -436,9 +436,13 @@ tune_jb2image_lossless(JB2Image *jimg)
   int nshapes = jimg->get_shape_count();
   GArray<MatchData> lib(nshapes);
   compute_matchdata_lossless(jimg, lib);
+#ifdef WIN32
   unsigned int t = GetTickCount(); // debug only
+#endif
   tune_jb2image(jimg, lib, false);
+#ifdef WIN32
   DjVuFormatErrorUTF8("tune_jb2image takes time %dms", GetTickCount() - t); // debug only
+#endif
 }
 
 
@@ -457,7 +461,11 @@ tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression)
   compute_matchdata_lossy(jimg, lib, dpi, options);
   mdjvu_matcher_options_destroy(options);
 
+#ifdef WIN32
   unsigned int t = GetTickCount(); // debug only
+#endif
   tune_jb2image(jimg, lib, true);
+#ifdef WIN32
   DjVuFormatErrorUTF8("tune_jb2image takes time %dms", GetTickCount() - t); // debug only
+#endif
 }
