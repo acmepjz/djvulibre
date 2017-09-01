@@ -1041,30 +1041,52 @@ void cjb2::cjb2_output() {
 		int shapes1 = shapes - shapes0;
 		//int shapes0new = 0; //unused
 
-		std::vector<int> shapeFreq, newIndex;
+		std::vector<int> newIndex;
 
 		GP<JB2Dict> newDict = JB2Dict::create();
 		if (shared_dict) newDict->set_inherited_dict(shared_dict);
 
 		if (shapes1 > 0) {
-			// count the frequency
-			shapeFreq.resize(shapes1, 0);
-			newIndex.resize(shapes1, -1);
-			for (int i = 0, m = jimg->get_blit_count(); i < m; i++) {
-				int shapeno = jimg->get_blit(i)->shapeno;
-				if (shapeno >= shapes0 && jimg->get_shape(shapeno).bits) shapeFreq[shapeno - shapes0]++;
+			// check which shapes should be added to the dictionary
+			// only shapes references by at least 2 pages are added to the dictionary
+			newIndex.resize(shapes1, 0x80000000);
+			for (int shapeno = shapes0, blitno = 0, i = 0, m = jimg_width.size(); i < m; i++) {
+				// check shapes in the current page, whose parent references other shapes
+				for (int m2 = jimg_shapes[i]; shapeno < m2; shapeno++) {
+					JB2Shape shape = jimg->get_shape(shapeno);
+					if (shape.parent >= shapes0) {
+						int &index = newIndex[shape.parent - shapes0];
+						if (index == 0x80000000) // not referenced before
+							index = 0x80000001 + i; // set to this page
+						else if (index != 0x80000001 + i) // if referenced by page other than this page
+							index = -1; // select it out
+					}
+				}
+
+				// check blits in the current page, which references shapes
+				for (int m2 = jimg_blits[i]; blitno < m2; blitno++) {
+					JB2Blit blit = *jimg->get_blit(blitno);
+					if ((int)blit.shapeno >= shapes0) {
+						int &index = newIndex[blit.shapeno - shapes0];
+						if (index == 0x80000000) // not referenced before
+							index = 0x80000001 + i; // set to this page
+						else if (index != 0x80000001 + i) // if referenced by page other than this page
+							index = -1; // select it out
+					}
+				}
 			}
-			for (int i = shapes0; i < shapes; i++) {
-				JB2Shape &shape = jimg->get_shape(i);
-				if (shape.bits) {
-					int shapeno = shape.parent;
-					if (shapeno >= shapes0 && jimg->get_shape(shapeno).bits) shapeFreq[shapeno - shapes0] += 2;
+
+			// the parent of shapes which are in dictionary should also be in dictionary
+			for (int shapeno = shapes1 - 1; shapeno >= 0; shapeno--) {
+				if (newIndex[shapeno] == -1) {
+					JB2Shape shape = jimg->get_shape(shapes0 + shapeno);
+					if (shape.parent >= shapes0) newIndex[shape.parent - shapes0] = -1;
 				}
 			}
 
 			// create the new dictionary, calculate the new index
 			for (int i = 0; i < shapes1; i++) {
-				if (shapeFreq[i] > 1) {
+				if (newIndex[i] == -1) {
 					JB2Shape shape = jimg->get_shape(shapes0 + i);
 					if (shape.parent >= shapes0) { // relocate
 						if ((shape.parent = newIndex[shape.parent - shapes0]) < 0) {
@@ -1118,9 +1140,7 @@ void cjb2::cjb2_output() {
 		}
 
 		// for each page
-		int shapeno = shapes0;
-		int blitno = 0;
-		for (int i = 0, m = jimg_width.size(); i < m; i++) {
+		for (int shapeno = shapes0, blitno = 0, i = 0, m = jimg_width.size(); i < m; i++) {
 			// create new JB2Image for the current page
 			GP<JB2Image> jimg2 = JB2Image::create();
 			jimg2->set_inherited_dict(newDict);
@@ -1128,18 +1148,15 @@ void cjb2::cjb2_output() {
 
 			// calculate the new index for remaining shapes in the current page
 			for (int m2 = jimg_shapes[i]; shapeno < m2; shapeno++) {
-				if (shapeFreq[shapeno - shapes0] == 1) {
+				int &index = newIndex[shapeno - shapes0];
+				if (index > 0x80000000 && index < -1) {
 					JB2Shape shape = jimg->get_shape(shapeno);
 					if (shape.parent >= shapes0) { // relocate
 						if ((shape.parent = newIndex[shape.parent - shapes0]) < 0) {
 							G_THROW("BUG: the new index should be valid");
 						}
 					}
-					int idx = jimg2->add_shape(shape);
-					if (newIndex[shapeno - shapes0] >= 0) {
-						G_THROW("BUG: the new index should be -1");
-					}
-					newIndex[shapeno - shapes0] = idx;
+					index = jimg2->add_shape(shape);
 				}
 			}
 
@@ -1148,7 +1165,7 @@ void cjb2::cjb2_output() {
 				JB2Blit blit = *jimg->get_blit(blitno);
 				if ((int)blit.shapeno >= shapes0) { // relocate
 					blit.shapeno = newIndex[blit.shapeno - shapes0];
-					if (blit.shapeno < 0) continue;
+					if ((int)blit.shapeno < 0) continue;
 				}
 				jimg2->add_blit(blit);
 			}
