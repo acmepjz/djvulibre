@@ -688,7 +688,7 @@ CCImage::append_to_jb2image(JB2Image *jimg) const
 struct cjb2opts {
   int  dpi;
   int  forcedpi;
-  int  losslevel;
+  std::vector<int> losslevel;
   bool verbose;
   GURL dict;
   std::string output_dict; // dictionary name with '%d'
@@ -976,8 +976,8 @@ void cjb2::cjb2_output() {
 #ifdef WIN32
 	unsigned int tickCount = GetTickCount();
 #endif
-	if (opts.losslevel>1)
-		tune_jb2image_lossy(jimg, opts.dpi, opts.losslevel);
+	if (!opts.losslevel.empty())
+		tune_jb2image_lossy_2(jimg, opts.dpi, &(opts.losslevel[0]), opts.losslevel.size());
 	else
 		tune_jb2image_lossless(jimg);
 
@@ -1237,6 +1237,9 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 	, opts(opts_)
 	, outputname(outputname_)
 {
+	// normalize options
+	if (!opts.losslevel.empty() && opts.losslevel[0] == 0) opts.losslevel.clear();
+
 	// Load shared dictionary
 	if (!opts.dict.is_empty()) {
 		shared_dict = loadDictionary(opts.dict);
@@ -1352,7 +1355,7 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 				// collect information
 				const int ccs_before = rimg.ccs.size();
 
-				if (opts.losslevel > 0 && !opts.no_clean)
+				if (!opts.losslevel.empty() && !opts.no_clean)
 					rimg.erase_tiny_ccs();       // clean
 				rimg.merge_and_split_ccs();    // reorganize weird ccs
 				rimg.sort_in_reading_order();  // sort cc descriptors
@@ -1499,8 +1502,11 @@ usage()
 		 " -no-clean       Don't cleanup during lossy compression.\n"
          " -lossy          Lossy compression (equivalent to -losslevel 100,\n"
 		 "                                    implies -clean as well)\n"
-		 " -losslevel <n>  Lossy compression with custom lossy factor (0-200)\n"
-         " -dict <file>    Set input dictionary file (experimental)\n"
+		 " -losslevel <n>[,<n2>...]\n"
+		 "                 Lossy compression with custom lossy factor (0-200).\n"
+		 "                 Sequence of decreasing numbers will enable recursive classifi-\n"
+		 "                 cation, runs slighty faster but produces slighly larger file.\n"
+		 " -dict <file>    Set input dictionary file (experimental)\n"
 		 " -output-dict <file>\n"
 		 "                 Generate dictionary for multipage encoding (experimental)\n"
 		 " -p <n>, -pages-per-dict <n>\n"
@@ -1560,7 +1566,6 @@ main(int argc, const char **argv)
       // Defaults
       opts.forcedpi = 0;
       opts.dpi = 300;
-      opts.losslevel = 0;
       opts.verbose = false;
 	  opts.pages_per_dict = 10;
 	  opts.no_clean = false;
@@ -1583,20 +1588,29 @@ main(int argc, const char **argv)
 			  opts.dict = GURL::Filename::UTF8(dargv[++i]);
 		  }
 		  else if (arg == "-losslevel")
-            {
+		  {
 			  if (i + 1 >= argc) usage();
+			  opts.losslevel.clear();
+			  const char *start = dargv[++i];
 			  char *end;
-              opts.losslevel = strtol(dargv[++i], &end, 10);
-              if (*end || opts.losslevel<0 || opts.losslevel>200)
-                usage();
-            }
-          else if (arg == "-lossless")
-            opts.losslevel = 0;
-          else if (arg == "-lossy")
-            opts.losslevel = 100;
-          else if (arg == "-clean") // almost deprecated
-            opts.losslevel = 1;
-		  else if (arg == "-no-clean")
+			  for (;;) {
+				  int losslevel = strtol(start, &end, 10);
+				  if (losslevel < 0 || losslevel > 200) usage();
+				  opts.losslevel.push_back(losslevel);
+				  if (*end == '\0') break;
+				  if (*end != ',') usage();
+				  start = end + 1;
+			  }
+		  }
+		  else if (arg == "-lossless") {
+			  opts.losslevel.clear();
+		  } else if (arg == "-lossy") {
+			  opts.losslevel.clear();
+			  opts.losslevel.push_back(100);
+		  } else if (arg == "-clean") { // almost deprecated
+			  opts.losslevel.clear();
+			  opts.losslevel.push_back(1);
+		  } else if (arg == "-no-clean")
 			  opts.no_clean = true;
 		  else if (arg == "-verbose" || arg == "-v")
 			  opts.verbose = true;

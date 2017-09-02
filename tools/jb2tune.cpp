@@ -180,11 +180,47 @@ compute_comparable_image(GBitmap *bits)
   return mdjvu_pattern_create_from_array(p, w, h);  
 }
 
+static int classify_patterns_recursive(mdjvu_pattern_t *handles, int *tags, int nshapes, int32 dpi, mdjvu_matcher_options_t *options, int count) {
+	// run pattern matcher
+	const int maxtag = mdjvu_classify_patterns(handles, tags, nshapes, dpi, options[0]);
+	if (count <= 1) return maxtag;
+
+	// reorder shapes
+	std::vector<std::vector<int> > indices(maxtag);
+	for (int i = 0; i < nshapes; i++) {
+		if (tags[i] > 0) indices[tags[i] - 1].push_back(i);
+	}
+	int M = 0;
+	for (int i = 0; i < maxtag; i++) {
+		const std::vector<int> &idx = indices[i];
+		if ((int)idx.size() > M) M = idx.size();
+	}
+
+	std::vector<mdjvu_pattern_t> handles2(M);
+	std::vector<int> tags2(M);
+
+	// run recursively
+	int currenttag = 0;
+	for (int i = 0; i < maxtag; i++) {
+		const std::vector<int> &idx = indices[i];
+		int m = idx.size();
+		for (int j = 0; j < m; j++) {
+			handles2[j] = handles[idx[j]];
+		}
+		const int maxtag2 = classify_patterns_recursive(&(handles2[0]), &(tags2[0]), m, dpi, options + 1, count - 1);
+		for (int j = 0; j < m; j++) {
+			tags[idx[j]] = tags2[j] + currenttag;
+		}
+		currenttag += maxtag2;
+	}
+
+	return currenttag;
+}
 
 // Compute MatchData array for lossy compression.
 static void
 compute_matchdata_lossy(JB2Image *jimg, MatchData *lib,
-                        int dpi, mdjvu_matcher_options_t options)
+                        int dpi, const int *aggression, int count)
 {
   int i;
   int nshapes0 = jimg->get_inherited_shape_count();
@@ -204,9 +240,17 @@ compute_matchdata_lossy(JB2Image *jimg, MatchData *lib,
       lib[i].area = compute_area(jshp.bits);
       handles[i] = compute_comparable_image(jshp.bits);
     }
+  // Prepare options
+  std::vector<mdjvu_matcher_options_t> options(count);
+  for (i = 0; i < count; i++) {
+	  mdjvu_set_aggression(options[i] = mdjvu_matcher_options_create(), aggression[i]);
+  }
   // Run Ilya's pattern matcher.
-  GTArray<int> tags(nshapes);  
-  int maxtag = mdjvu_classify_patterns(handles, tags, nshapes, dpi, options);
+  GTArray<int> tags(nshapes);
+  int maxtag = classify_patterns_recursive(handles, tags, nshapes, dpi, &(options[0]), count);
+  // Destroy options
+  for (i = 0; i < count; i++) mdjvu_matcher_options_destroy(options[i]);
+  options.clear();
   // Extract substitutions
   GTArray<int> reps(maxtag);
   for (i=0; i<=maxtag; i++)
@@ -451,15 +495,12 @@ tune_jb2image_lossless(JB2Image *jimg)
 // Thanks to Ilya Mezhirov.
 
 void 
-tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression)
+tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count)
 {
   int nshapes = jimg->get_shape_count();
   GArray<MatchData> lib(nshapes);
 
-  mdjvu_matcher_options_t options = mdjvu_matcher_options_create();
-  mdjvu_set_aggression(options, aggression);
-  compute_matchdata_lossy(jimg, lib, dpi, options);
-  mdjvu_matcher_options_destroy(options);
+  compute_matchdata_lossy(jimg, lib, dpi, aggression, count);
 
 #ifdef WIN32
   unsigned int t = GetTickCount(); // debug only
@@ -468,4 +509,8 @@ tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression)
 #ifdef WIN32
   DjVuFormatErrorUTF8("tune_jb2image takes time %dms", GetTickCount() - t); // debug only
 #endif
+}
+
+void tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression) {
+	tune_jb2image_lossy_2(jimg, dpi, &aggression, 1);
 }
