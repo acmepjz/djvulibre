@@ -68,7 +68,8 @@
 extern void tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression);
 extern void tune_jb2image_lossless(JB2Image *jimg);
 
-extern void tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count);
+extern void tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count, int classification_aggression, float classification_count);
+extern void tune_jb2image_lossless_2(JB2Image *jimg, int dpi, int classification_aggression, float classification_count);
 
 // Values for userdata in JB2Shape
 #define JB2SHAPE_LOSSLESS 1

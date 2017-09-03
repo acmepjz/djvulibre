@@ -693,6 +693,8 @@ struct cjb2opts {
   GURL dict;
   std::string output_dict; // dictionary name with '%d'
   int pages_per_dict;
+  int classification_aggression;
+  float classification_count;
   bool no_clean;
   bool bundled;
 };
@@ -977,9 +979,11 @@ void cjb2::cjb2_output() {
 	unsigned int tickCount = GetTickCount();
 #endif
 	if (!opts.losslevel.empty())
-		tune_jb2image_lossy_2(jimg, opts.dpi, &(opts.losslevel[0]), opts.losslevel.size());
+		tune_jb2image_lossy_2(jimg, opts.dpi, &(opts.losslevel[0]), opts.losslevel.size(),
+		opts.classification_aggression, opts.classification_count);
 	else
-		tune_jb2image_lossless(jimg);
+		tune_jb2image_lossless_2(jimg, opts.dpi,
+		opts.classification_aggression, opts.classification_count);
 
 	print_tune_result();
 #ifdef WIN32
@@ -1504,15 +1508,22 @@ usage()
 		 "                                    implies -clean as well)\n"
 		 " -losslevel <n>[,<n2>...]\n"
 		 "                 Lossy compression with custom lossy factor (0-200).\n"
-		 "                 Sequence of decreasing numbers will enable recursive classifi-\n"
-		 "                 cation, runs slighty faster but produces slighly larger file.\n"
+		 "                 (experimental) Sequence of decreasing numbers will enable\n"
+		 "                 recursive classification, runs slighty faster but produces\n"
+		 "                 slighly larger file.\n"
 		 " -dict <file>    Set input dictionary file (experimental)\n"
 		 " -output-dict <file>\n"
 		 "                 Generate dictionary for multipage encoding (experimental)\n"
 		 " -p <n>, -pages-per-dict <n>\n"
 		 "                 Pages per dictionary (default 10, 0=all)\n"
 		 " -b, -bundled    Create bundled document for multipage encoding\n"
-         "Encoding is lossless unless a lossy options is selected.\n" );
+		 " -ca <n>         (experimental) Restrict cross-coding to the given aggression\n"
+		 "                 level (2-200, usually 100-200, usually improves speed,\n"
+		 "                 the smaller the larger file)\n"
+		 " -cc <n>         (experimental) ... but exclude first <n> file in each class\n"
+		 "                 (0-1, default 0.1, usually 0.0-0.1, the smaller the faster,\n"
+		 "                 but the larger file)\n"
+		 "Encoding is lossless unless a lossy options is selected.\n");
   exit(10);
 }
 
@@ -1568,6 +1579,8 @@ main(int argc, const char **argv)
       opts.dpi = 300;
       opts.verbose = false;
 	  opts.pages_per_dict = 10;
+	  opts.classification_aggression = 0;
+	  opts.classification_count = 0.1;
 	  opts.no_clean = false;
 	  opts.bundled = false;
       // Parse options
@@ -1616,14 +1629,22 @@ main(int argc, const char **argv)
 			  opts.verbose = true;
 		  else if (arg == "-bundled" || arg == "-b")
 			  opts.bundled = true;
-		  else if (arg == "-pages-per-dict" || arg == "-p")
-		  {
+		  else if (arg == "-pages-per-dict" || arg == "-p") {
 			  if (i + 1 >= argc) usage();
 			  char *end;
 			  opts.pages_per_dict = strtol(dargv[++i], &end, 10);
 			  if (*end) usage();
-		  } else if (arg == "-output-dict")
-		  {
+		  } else if (arg == "-ca") {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.classification_aggression = strtol(dargv[++i], &end, 10);
+			  if (*end || opts.classification_aggression < 0 || opts.classification_aggression > 200) usage();
+		  } else if (arg == "-cc") {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.classification_count = strtof(dargv[++i], &end);
+			  if (*end || opts.classification_count < 0 || opts.classification_count > 1) usage();
+		  } else if (arg == "-output-dict") {
 			  if (i + 1 >= argc) usage();
 			  opts.output_dict = (const char*)dargv[++i];
 		  } else if (arg == "-f") {

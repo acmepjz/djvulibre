@@ -301,7 +301,7 @@ private:
 // Flag lossy is not strictly necessary
 // but speeds up things when it is false.
 static void 
-tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
+tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy, int dpi, int classification_aggression, float classification_count)
 {
 	int nshapes0 = jimg->get_inherited_shape_count();
 	int nshapes = jimg->get_shape_count();
@@ -329,6 +329,33 @@ tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 		simpleMap.add(cross_bitmap->columns() >> 1, cross_bitmap->rows() >> 1, i);
 	}
 
+	// and do a rough classification
+	std::vector<int> tags;
+	std::vector<int> tagCount;
+	if (classification_aggression > 1) {
+		std::vector<mdjvu_pattern_t> handles(nshapes, 0);
+		tags.resize(nshapes, 0);
+		for (int i = 0; i < nshapes; i++) {
+			GBitmap *cross_bitmap = lib[i].bits;
+			if (!cross_bitmap) continue;
+			handles[i] = compute_comparable_image(cross_bitmap);
+		}
+
+		mdjvu_matcher_options_t option = mdjvu_matcher_options_create();
+		mdjvu_set_aggression(option, classification_aggression);
+		const int maxtag = mdjvu_classify_patterns(&(handles[0]), &(tags[0]), nshapes, dpi, option);
+		mdjvu_matcher_options_destroy(option);
+
+		tagCount.resize(maxtag, 0);
+		for (int i = 0; i < nshapes; i++) {
+			if (handles[i]) mdjvu_pattern_destroy(handles[i]);
+			if (tags[i] > 0) tagCount[tags[i] - 1]++;
+		}
+		for (int i = 0; i < maxtag; i++) {
+			tagCount[i] = int(tagCount[i] * classification_count) + 1;
+		}
+	}
+
 	// Loop on all shapes
 	for (int current = nshapes0; current < nshapes; current++)
 	{
@@ -338,6 +365,12 @@ tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 		// Leave special shapes alone.
 		if (!jshp.bits) continue;
 		if (jshp.userdata & JB2SHAPE_SPECIAL) continue;
+
+		int tag = 0; // >0 means search same tag only
+		if (classification_aggression > 1 && (tag = tags[current]) > 0) {
+			if ((--tagCount[tag - 1]) >= 0) tag = 0;
+		}
+
 		// Compute matchdata info
 		GBitmap &bitmap = *(jshp.bits);
 		int rows = bitmap.rows();
@@ -358,8 +391,8 @@ tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 				for (int iii = 0, mmm = candidates.size(); iii < mmm; iii++) {
 					int candidate = candidates[iii];
 					if (candidate >= current) break;
+					if (tag > 0 && tags[candidate] != tag) continue;
 
-					int row, column;
 					// Access candidate bitmap
 					if (!lib[candidate].bits)
 						continue;
@@ -388,12 +421,12 @@ tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 					int score = 0;
 					unsigned char *p_row;
 					unsigned char *p_cross_row;
-					for (row = -1; row <= rows; row++)
+					for (int row = -1; row <= rows; row++)
 					{
 						p_row = bitmap[row];
 						p_cross_row = cross_bitmap[row + cross_row_adjust];
 						p_cross_row += cross_col_adjust;
-						for (column = -1; column <= cols; column++)
+						for (int column = -1; column <= cols; column++)
 							if (p_row[column] != p_cross_row[column])
 								score++;
 						if (score >= best_score)  // prune
@@ -475,7 +508,7 @@ tune_jb2image(JB2Image *jimg, MatchData *lib, bool lossy)
 
 
 void 
-tune_jb2image_lossless(JB2Image *jimg)
+tune_jb2image_lossless_2(JB2Image *jimg, int dpi, int classification_aggression, float classification_count)
 {
   int nshapes = jimg->get_shape_count();
   GArray<MatchData> lib(nshapes);
@@ -483,19 +516,22 @@ tune_jb2image_lossless(JB2Image *jimg)
 #ifdef WIN32
   unsigned int t = GetTickCount(); // debug only
 #endif
-  tune_jb2image(jimg, lib, false);
+  tune_jb2image(jimg, lib, false, dpi, classification_aggression, classification_count);
 #ifdef WIN32
   DjVuFormatErrorUTF8("tune_jb2image takes time %dms", GetTickCount() - t); // debug only
 #endif
 }
 
+void tune_jb2image_lossless(JB2Image *jimg) {
+	tune_jb2image_lossless_2(jimg, 300, 0, 1.0);
+}
 
 // ----------------------------------------
 // LOSSY COMPRESSION
 // Thanks to Ilya Mezhirov.
 
 void 
-tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count)
+tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count, int classification_aggression, float classification_count)
 {
   int nshapes = jimg->get_shape_count();
   GArray<MatchData> lib(nshapes);
@@ -505,12 +541,12 @@ tune_jb2image_lossy_2(JB2Image *jimg, int dpi, const int *aggression, int count)
 #ifdef WIN32
   unsigned int t = GetTickCount(); // debug only
 #endif
-  tune_jb2image(jimg, lib, true);
+  tune_jb2image(jimg, lib, true, dpi, classification_aggression, classification_count);
 #ifdef WIN32
   DjVuFormatErrorUTF8("tune_jb2image takes time %dms", GetTickCount() - t); // debug only
 #endif
 }
 
 void tune_jb2image_lossy(JB2Image *jimg, int dpi, int aggression) {
-	tune_jb2image_lossy_2(jimg, dpi, &aggression, 1);
+	tune_jb2image_lossy_2(jimg, dpi, &aggression, 1, 0, 1.0);
 }
