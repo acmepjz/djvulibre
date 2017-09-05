@@ -32,6 +32,7 @@ find_package(JPEG)
 find_package(TIFF)
 find_package(ZLIB)
 find_package(FreeImage)
+find_package(Leptonica)
 
 if(JPEG_FOUND)
 	option(HAVE_JPEG "Define if you have the IJG JPEG library." ON)
@@ -55,6 +56,12 @@ if(FreeImage_FOUND)
 	option(HAVE_FREEIMAGE "Define if you have FreeImage." ON)
 else()
 	option(HAVE_FREEIMAGE "Define if you have FreeImage." OFF)
+endif()
+
+if(Leptonica_FOUND)
+	option(HAVE_LEPT "Define if you want to use Leptonica." ON)
+else()
+	option(HAVE_LEPT "Define if you want to use Leptonica." OFF)
 endif()
 
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
@@ -134,6 +141,12 @@ if(FreeImage_FOUND AND HAVE_FREEIMAGE)
     add_definitions(-DHAVE_FREEIMAGE=1)
 	set(ADDITIONAL_INCLUDES ${ADDITIONAL_INCLUDES} ${FreeImage_INCLUDE_DIRS})
     set(ADDITIONAL_LIBRARIES ${ADDITIONAL_LIBRARIES} ${FreeImage_LIBRARIES})
+endif()
+
+if(Leptonica_FOUND AND HAVE_LEPT)
+    add_definitions(-DHAVE_LEPT=1)
+	set(ADDITIONAL_INCLUDES ${ADDITIONAL_INCLUDES} ${Leptonica_INCLUDE_DIRS})
+    set(ADDITIONAL_LIBRARIES ${ADDITIONAL_LIBRARIES} ${Leptonica_LIBRARIES})
 endif()
 
 # ******************************************************************************

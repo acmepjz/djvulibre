@@ -122,8 +122,12 @@
 #if HAVE_TIFF
 #include <tiffio.h>
 #endif
+#if HAVE_LEPT
+#include <allheaders.h>
+#endif
 
 #include <stdio.h>
+#include <string.h>
 #include <string>
 #include <vector>
 
@@ -697,6 +701,14 @@ struct cjb2opts {
   float classification_count;
   bool no_clean;
   bool bundled;
+#if HAVE_LEPT
+  int method; // -1, JB_RANKHAUS = 0, JB_CORRELATION = 1
+  int components; // JB_CONN_COMPS = 0, JB_CHARACTERS = 1, JB_WORDS = 2
+  int sizehaus; // size of square struct elem for haus (1-10)
+  float rankhaus; // rank val of haus match, each way (0.5-1.0)
+  float thresh; // thresh value for correlation score (0.4-0.98)
+  float weightfactor; // corrects thresh value for heaver (0.0-1.0)
+#endif
 };
 
 #if HAVE_TIFF
@@ -771,75 +783,104 @@ static TIFF* open_tiff(ByteStream *bs) {
 }
 
 static void
-read_tiff(CCImage &rimg, TIFF *tiff, cjb2opts &opts)
+read_tiff(CCImage *rimg, void **ppix_, TIFF *tiff, cjb2opts &opts)
 {
-  // bitonal
-  uint16 bps = 0, spp = 0;
-  TIFFGetFieldDefaulted(tiff, TIFFTAG_BITSPERSAMPLE, &bps);
-  TIFFGetFieldDefaulted(tiff, TIFFTAG_SAMPLESPERPIXEL, &spp);
-  if (bps != 1 || spp != 1)
-    G_THROW("Tiff image is not bitonal");
-  // photometric
-  uint16 photo = PHOTOMETRIC_MINISWHITE;
-  TIFFGetFieldDefaulted(tiff, TIFFTAG_PHOTOMETRIC, &photo);
-  // image size
-  uint32 w, h;
-  if (!TIFFGetFieldDefaulted(tiff, TIFFTAG_IMAGEWIDTH, &w) ||
-      !TIFFGetFieldDefaulted(tiff, TIFFTAG_IMAGELENGTH, &h) )
-    G_THROW("Tiff image size is not defined");
-  // resolution
-  float xres, yres;
-  if (TIFFGetFieldDefaulted(tiff, TIFFTAG_XRESOLUTION, &xres) &&
-      TIFFGetFieldDefaulted(tiff, TIFFTAG_YRESOLUTION, &yres) ) 
-    {
-      if (xres != yres)
-        DjVuPrintErrorUTF8( "cjb2: X- and Y-resolution do not match\n");
-      if (! opts.forcedpi)
-        opts.dpi = (int) (xres + yres) / 2;
-    }
-  // init rimg
-  rimg.init(w, h, opts.dpi);
-  // allocate scanline
-  tsize_t scanlinesize = TIFFScanlineSize(tiff);
-  scanlinesize = MAX(scanlinesize,1);
-  unsigned char *scanline = 0;
-  GPBuffer<unsigned char> gscanline(scanline, scanlinesize);
-  // iterate on rows
-  for (int y=0; y<(int)h; y++)
-    {
-      int yy = h - y - 1;
-      if (TIFFReadScanline(tiff, (tdata_t)scanline, y) < 0)
-        G_THROW("Tiff file is corrupted (TIFFReadScanline)");
-      if (photo != PHOTOMETRIC_MINISWHITE)
-        for (int i=0; i<(int)scanlinesize; i++)
-          scanline[i] ^= 0xff;
-      int lastx=0, off=0;
-      unsigned char mask=0, c=0, b=0;
-      for (int x=0; x<(int)w; x++)
-        {
-          if (! mask) 
-            {
-              b = scanline[off++];
-              while (b==c && x+8<(int)w )
-                {
-                  x = x + 8;  // speedup
-                  b = scanline[off++];
-                }
-              mask = 0x80;
-            }
-          if ( (b ^ c) & mask ) 
-            {
-              c ^= 0xff;
-              if (c)
-                lastx = x;
-              else
-                rimg.add_single_run(yy, lastx, x-1);
-            }
-          mask >>= 1;
-        }
-      if (c)
-        rimg.add_single_run(yy, lastx, w-1);
-    }
+	// bitonal
+	uint16 bps = 0, spp = 0;
+	TIFFGetFieldDefaulted(tiff, TIFFTAG_BITSPERSAMPLE, &bps);
+	TIFFGetFieldDefaulted(tiff, TIFFTAG_SAMPLESPERPIXEL, &spp);
+	if (bps != 1 || spp != 1)
+		G_THROW("Tiff image is not bitonal");
+	// photometric
+	uint16 photo = PHOTOMETRIC_MINISWHITE;
+	TIFFGetFieldDefaulted(tiff, TIFFTAG_PHOTOMETRIC, &photo);
+	// image size
+	uint32 w, h;
+	if (!TIFFGetFieldDefaulted(tiff, TIFFTAG_IMAGEWIDTH, &w) ||
+		!TIFFGetFieldDefaulted(tiff, TIFFTAG_IMAGELENGTH, &h))
+		G_THROW("Tiff image size is not defined");
+	// resolution
+	float xres, yres;
+	if (TIFFGetFieldDefaulted(tiff, TIFFTAG_XRESOLUTION, &xres) &&
+		TIFFGetFieldDefaulted(tiff, TIFFTAG_YRESOLUTION, &yres))
+	{
+		if (xres != yres)
+			DjVuPrintErrorUTF8("cjb2: X- and Y-resolution do not match\n");
+		if (!opts.forcedpi)
+			opts.dpi = (int)(xres + yres) / 2;
+	}
+	// init rimg
+#if HAVE_LEPT
+	PIX *pix = 0;
+	unsigned char *data = 0; // data of pix
+	int bpl = 0; // bytes per scanline of pix
+#endif
+	if (rimg) {
+		rimg->init(w, h, opts.dpi);
+	}
+#if HAVE_LEPT
+	else {
+		pix = pixCreate(w, h, 1);
+		pix->xres = pix->yres = opts.dpi;
+		data = (unsigned char *)pix->data;
+		bpl = 4 * pix->wpl;
+	}
+#endif
+	// allocate scanline
+	tsize_t scanlinesize = TIFFScanlineSize(tiff);
+	scanlinesize = MAX(scanlinesize, 1);
+	unsigned char *scanline = 0;
+	GPBuffer<unsigned char> gscanline(scanline, scanlinesize);
+	// iterate on rows
+	for (int y = 0; y < (int)h; y++)
+	{
+		if (TIFFReadScanline(tiff, (tdata_t)scanline, y) < 0)
+			G_THROW("Tiff file is corrupted (TIFFReadScanline)");
+		if (photo != PHOTOMETRIC_MINISWHITE)
+			for (int i = 0; i < (int)scanlinesize; i++)
+				scanline[i] ^= 0xff;
+		if (rimg) {
+			int yy = h - y - 1;
+			int lastx = 0, off = 0;
+			unsigned char mask = 0, c = 0, b = 0;
+			for (int x = 0; x < (int)w; x++)
+			{
+				if (!mask)
+				{
+					b = scanline[off++];
+					while (b == c && x + 8 < (int)w)
+					{
+						x = x + 8;  // speedup
+						b = scanline[off++];
+					}
+					mask = 0x80;
+				}
+				if ((b ^ c) & mask)
+				{
+					c ^= 0xff;
+					if (c)
+						lastx = x;
+					else
+						rimg->add_single_run(yy, lastx, x - 1);
+				}
+				mask >>= 1;
+			}
+			if (c)
+				rimg->add_single_run(yy, lastx, w - 1);
+		}
+#if HAVE_LEPT
+		else {
+			memcpy(data, scanline, scanlinesize);
+			data += bpl;
+		}
+#endif
+	}
+#if HAVE_LEPT
+	if (pix) {
+		pixEndianByteSwap(pix);
+		*ppix_ = pix;
+	}
+#endif
 }
 
 #endif // HAVE_TIFF
@@ -917,6 +958,26 @@ private:
 	GURL get_output_name();
 	GURL get_output_dict_name();
 	void print_tune_result();
+
+#if HAVE_LEPT
+	JBCLASSER *jbclasser;
+
+	void recreate_jbclasser() {
+		if (jbclasser) jbClasserDestroy(&jbclasser);
+		switch (opts.method) {
+		case JB_RANKHAUS:
+			jbclasser = jbRankHausInit(opts.components, 0x20000, 0x20000, opts.sizehaus, opts.rankhaus);
+			jbclasser->keep_pixaa = 0; // ???
+			break;
+		case JB_CORRELATION:
+			jbclasser = jbCorrelationInitWithoutComponents(opts.components, 0x20000, 0x20000, opts.thresh, opts.weightfactor);
+			break;
+		}
+	}
+	void destroy_jbclasser() {
+		if (jbclasser) jbClasserDestroy(&jbclasser);
+	}
+#endif
 };
 
 GURL cjb2::get_output_name() {
@@ -958,6 +1019,8 @@ GURL cjb2::get_output_dict_name() {
 }
 
 void cjb2::print_tune_result() {
+	JBCLASSER *classer = jbCorrelationInit(JB_CHARACTERS, 65536, 65536, 0.8, 0.6);
+	jbClasserDestroy(&classer);
 	if (opts.verbose)
 	{
 		int nshape = 0, nrefine = 0;
@@ -972,7 +1035,74 @@ void cjb2::print_tune_result() {
 }
 
 void cjb2::cjb2_output() {
-	if (!jimg || jimg_width.empty()) return; // do nothing
+	const int JB_ADDED_PIXELS = 6;
+
+	if (jimg_width.empty()) return; // do nothing
+
+	// collect data from Leptonica classifier
+#if HAVE_LEPT
+	if (opts.method >= 0) {
+		// calculate position
+		jbGetLLCorners(jbclasser);
+
+		// create JB2Image
+		jimg = JB2Image::create();
+		if (shared_dict) jimg->set_inherited_dict(shared_dict);
+
+		const int shapes0 = jimg->get_inherited_shape_count();
+
+		// add all shapes
+		for (int i = 0, m = jbclasser->nclass; i < m; i++) {
+			PIX *pix = pixConvert1To8(0, jbclasser->pixat->pix[i], 0, 0xFF);
+			{
+				PIX *pix2 = pixRemoveBorder(pix, JB_ADDED_PIXELS);
+				pixDestroy(&pix);
+				pix = pix2;
+			}
+			const int w = pix->w, h = pix->h;
+			pixEndianByteSwap(pix);
+
+			JB2Shape shape;
+			shape.parent = -1;
+			shape.bits = GBitmap::create(h, w);
+			shape.userdata = 0;
+
+			unsigned int *data = pix->data;
+			const int wpl = pix->wpl;
+			for (int y = 0; y < h; y++) {
+				memcpy((*shape.bits)[h - 1 - y], data, w);
+				data += wpl;
+			}
+			pixDestroy(&pix);
+
+			shape.bits->compress();
+			jimg->add_shape(shape);
+		}
+
+		// for each page
+		for (int i = 0, blitno = 0, m = jimg_width.size(); i < m; i++) {
+			const int h = jimg_height[i];
+
+			// correct shape number by shared dictionary
+			jimg_shapes[i] += shapes0;
+
+			// add all blits
+			for (int m2 = jimg_blits[i]; blitno < m2; blitno++) {
+				JB2Blit blit;
+				blit.left = int(jbclasser->ptall->x[blitno]);
+				blit.bottom = h - 1 - int(jbclasser->ptall->y[blitno]);
+				blit.shapeno = int(jbclasser->naclass->array[blitno]) + shapes0;
+
+				jimg->add_blit(blit);
+			}
+		}
+
+		// over
+		destroy_jbclasser();
+	}
+#endif
+
+	if (!jimg) return; // do nothing
 
 	// Pattern matching
 #ifdef WIN32
@@ -1040,9 +1170,9 @@ void cjb2::cjb2_output() {
 		iff.close_chunk();
 		// Finished!
 	} else {
-		int shapes0 = jimg->get_inherited_shape_count();
-		int shapes = jimg->get_shape_count();
-		int shapes1 = shapes - shapes0;
+		const int shapes0 = jimg->get_inherited_shape_count();
+		const int shapes = jimg->get_shape_count();
+		const int shapes1 = shapes - shapes0;
 		//int shapes0new = 0; //unused
 
 		std::vector<int> newIndex;
@@ -1240,9 +1370,17 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 	, isMultiDict(false)
 	, opts(opts_)
 	, outputname(outputname_)
+#if HAVE_LEPT
+	, jbclasser(0)
+#endif
 {
 	// normalize options
 	if (!opts.losslevel.empty() && opts.losslevel[0] == 0) opts.losslevel.clear();
+
+	// disable internal classifier if Leptonica is used
+#if HAVE_LEPT
+	if (opts.method >= 0) opts.losslevel.clear();
+#endif
 
 	// Load shared dictionary
 	if (!opts.dict.is_empty()) {
@@ -1332,6 +1470,9 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 		// for each page in the file
 		for (int p = 0; p < pagecount; p++) {
 			CCImage rimg;
+#if HAVE_LEPT
+			PIX *pix = 0;
+#endif
 
 			// load the current page
 #if HAVE_TIFF
@@ -1339,15 +1480,80 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 				if (p > 0) {
 					if(!TIFFReadDirectory(tiff)) break;
 				}
-				read_tiff(rimg, tiff, opts);
+#if HAVE_LEPT
+				if (opts.method >= 0) {
+					read_tiff(0, (void**)&pix, tiff, opts);
+				} else
+#endif
+				{
+					read_tiff(&rimg, 0, tiff, opts);
+				}
 			} else
 #endif
 			{
 				GP<GBitmap> input = GBitmap::create(*ibs);
-				rimg.init(input->columns(), input->rows(), opts.dpi);
-				rimg.add_bitmap_runs(*input);
+#if HAVE_LEPT
+				if (opts.method >= 0) {
+					const int w = input->columns();
+					const int h = input->rows();
+					pix = pixCreate(w, h, 1);
+					pix->xres = pix->yres = opts.dpi;
+					unsigned int *data = pix->data;
+					const int wpl = pix->wpl;
+					for (int y = h - 1; y >= 0; y--) {
+						const unsigned char *row = (*input)[y];
+						unsigned int *row2 = data;
+						unsigned int mask = 0x80000000;
+						for (int x = 0; x < w; x++) {
+							if (row[x]) *row2 |= mask;
+							mask >>= 1;
+							if (mask == 0) {
+								row2++;
+								mask = 0x80000000;
+							}
+						}
+						data += wpl;
+					}
+				} else
+#endif
+				{
+					rimg.init(input->columns(), input->rows(), opts.dpi);
+					rimg.add_bitmap_runs(*input);
+				}
 			}
 
+#if HAVE_LEPT
+			if (opts.method >= 0) {
+				if (!jbclasser) recreate_jbclasser();
+
+				// get connected components
+				BOXA *boxa;
+				PIXA *pixa;
+				jbGetComponents(pix, jbclasser->components, 0x20000, 0x20000, &boxa, &pixa);
+
+				const int old_shapes = jbclasser->nclass;
+				const int old_blits = jbclasser->baseindex;
+
+				// and add to the classifier
+				jbAddPageComponents(jbclasser, pix, boxa, pixa);
+
+				jimg_width.push_back(pix->w);
+				jimg_height.push_back(pix->h);
+				jimg_shapes.push_back(jbclasser->nclass);
+				jimg_blits.push_back(jbclasser->baseindex);
+
+				// print information
+				if (opts.verbose) {
+					DjVuFormatErrorUTF8("leptonica: %d ccs, %d shapes after classification.",
+						jbclasser->baseindex - old_blits, jbclasser->nclass - old_shapes);
+				}
+
+				// cleanup
+				boxaDestroy(&boxa);
+				pixaDestroy(&pixa);
+				pixDestroy(&pix);
+			} else
+#endif
 			{
 				// collect infomation
 				const int rimg_runs = rimg.runs.size();
@@ -1372,22 +1578,22 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 					DjVuFormatErrorUTF8("cjb2: %d runs, %d ccs, %d after cleaning, merging & splitting.",
 						rimg_runs, ccs_before, ccs_after);
 				}
-			}
 
-			// Append to jb2image (assuming tune_jb2image_* doesn't change the order of shapes and blits)
-			if (!jimg) {
-				jimg = JB2Image::create();
-				if (shared_dict) jimg->set_inherited_dict(shared_dict);
-			}
-			rimg.append_to_jb2image(jimg);
-			jimg_width.push_back(rimg.width);
-			jimg_height.push_back(rimg.height);
-			jimg_shapes.push_back(jimg->get_shape_count());
-			jimg_blits.push_back(jimg->get_blit_count());
+				// Append to jb2image (assuming tune_jb2image_* doesn't change the order of shapes and blits)
+				if (!jimg) {
+					jimg = JB2Image::create();
+					if (shared_dict) jimg->set_inherited_dict(shared_dict);
+				}
+				rimg.append_to_jb2image(jimg);
+				jimg_width.push_back(rimg.width);
+				jimg_height.push_back(rimg.height);
+				jimg_shapes.push_back(jimg->get_shape_count());
+				jimg_blits.push_back(jimg->get_blit_count());
 
-			// save memory
-			rimg.runs.empty();
-			rimg.ccs.empty();
+				// save memory
+				rimg.runs.empty();
+				rimg.ccs.empty();
+			}
 
 			// Check if we need to output result
 			if ((int)jimg_width.size() >= opts.pages_per_dict) cjb2_output();
@@ -1523,6 +1729,28 @@ usage()
 		 " -cc <n>         (experimental) ... but exclude first <n> file in each class\n"
 		 "                 (0-1, default 0.1, usually 0.0-0.1, the smaller the faster,\n"
 		 "                 but the larger file)\n"
+#if HAVE_LEPT
+		 " -lrh, -lept-rankhaus <components>[,<size>[,<rank>]]\n"
+		 "                 (experimental) Use Leptonica rank Hausdorff classifier instead\n"
+		 "                 of internal classifier for lossy compression.\n"
+		 "             components: minimal classifying unit:\n"
+		 "                 0=connected components, 1=characters, 2=words\n"
+		 "             size: size of square structuring element [1 - 10, default 2]; 2 is\n"
+		 "                 necessary for reasonable accuracy of small components; combine\n"
+		 "                 this with rank ~0.97 to avoid undue class expansion\n"
+		 "             rank: rank val of match, each way; in [0.5 - 1.0, default 0.97];\n"
+		 "                 when using size = 2, 0.97 is a reasonable value\n"
+		 " -lc, -lept-correlation <components>[,<thresh>[,<weightfactor>]]\n"
+		 "                 (experimental) Use Leptonica correlation classifier instead\n"
+		 "                 of internal classifier for lossy compression.\n"
+		 "             thresh: value for correlation score: in [0.4 - 0.98, default 0.8]\n"
+		 "                 For scanned text, suggested input values are 0.8 - 0.85\n"
+		 "                 For electronically generated fonts (e.g., rasterized pdf),\n"
+		 "                 a very high thresh (e.g., 0.95) will not cause a significant\n"
+		 "                 increase in the number of classes.\n"
+		 "             weightfactor: corrects thresh for thick char [0 - 1, default 0.6]\n"
+		 "                 For scanned text, suggested input values are 0.5 - 0.6\n"
+#endif
 		 "Encoding is lossless unless a lossy options is selected.\n");
   exit(10);
 }
@@ -1583,6 +1811,14 @@ main(int argc, const char **argv)
 	  opts.classification_count = 0.1;
 	  opts.no_clean = false;
 	  opts.bundled = false;
+#if HAVE_LEPT
+	  opts.method = -1;
+	  opts.components = JB_CONN_COMPS;
+	  opts.sizehaus = 2;
+	  opts.rankhaus = 0.97;
+	  opts.thresh = 0.8;
+	  opts.weightfactor = 0.6;
+#endif
       // Parse options
       for (int i=1; i<argc; i++)
         {
@@ -1644,6 +1880,40 @@ main(int argc, const char **argv)
 			  char *end;
 			  opts.classification_count = strtof(dargv[++i], &end);
 			  if (*end || opts.classification_count < 0 || opts.classification_count > 1) usage();
+#if HAVE_LEPT
+		  } else if (arg == "-lept-rankhaus" || arg == "-lrh") {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.method = JB_RANKHAUS;
+			  opts.sizehaus = 2;
+			  opts.rankhaus = 0.97;
+			  opts.components = strtol(dargv[++i], &end, 10);
+			  if ((*end != ',' && *end) || opts.components < 0 || opts.components > 2) usage();
+			  if (*end) {
+				  opts.sizehaus = strtol(end + 1, &end, 10);
+				  if ((*end != ',' && *end) || opts.sizehaus < 1 || opts.sizehaus > 10) usage();
+				  if (*end) {
+					  opts.rankhaus = strtof(end + 1, &end);
+					  if (*end || opts.rankhaus < 0.5 || opts.rankhaus > 1.0) usage();
+				  }
+			  }
+		  } else if (arg == "-lept-correlation" || arg == "-lc") {
+			  if (i + 1 >= argc) usage();
+			  char *end;
+			  opts.method = JB_CORRELATION;
+			  opts.thresh = 0.8;
+			  opts.weightfactor = 0.6;
+			  opts.components = strtol(dargv[++i], &end, 10);
+			  if ((*end != ',' && *end) || opts.components < 0 || opts.components > 2) usage();
+			  if (*end) {
+				  opts.thresh = strtof(end + 1, &end);
+				  if ((*end != ',' && *end) || opts.thresh < 0.4 || opts.thresh > 0.98) usage();
+				  if (*end) {
+					  opts.weightfactor = strtof(end + 1, &end);
+					  if (*end || opts.weightfactor < 0.0 || opts.weightfactor > 1.0) usage();
+				  }
+			  }
+#endif
 		  } else if (arg == "-output-dict") {
 			  if (i + 1 >= argc) usage();
 			  opts.output_dict = (const char*)dargv[++i];

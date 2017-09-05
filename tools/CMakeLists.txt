@@ -37,9 +37,9 @@ add_djvutool(djvused djvused.cpp)
 add_djvutool(djvutxt djvutxt.cpp)
 add_djvutool(djvuserve djvuserve.cpp)
 
-target_link_libraries(cjb2 jb2 djvulibre ${ADDITIONAL_LIBRARIES})
-target_link_libraries(cpaldjvu jb2 djvulibre ${ADDITIONAL_LIBRARIES})
-target_link_libraries(csepdjvu jb2 djvulibre ${ADDITIONAL_LIBRARIES})
+target_link_libraries(cjb2 jb2)
+target_link_libraries(cpaldjvu jb2)
+target_link_libraries(csepdjvu jb2)
 
 # ******************************************************************************
 # install man pages
