@@ -1723,12 +1723,12 @@ usage()
 		 " -p <n>, -pages-per-dict <n>\n"
 		 "                 Pages per dictionary (default 10, 0=all)\n"
 		 " -b, -bundled    Create bundled document for multipage encoding\n"
-		 " -ca <n>         (experimental) Restrict cross-coding to the given aggression\n"
-		 "                 level (2-200, usually 100-200, usually improves speed,\n"
-		 "                 the smaller the larger file)\n"
-		 " -cc <n>         (experimental) ... but exclude first <n> file in each class\n"
+		 " -ca <n>         (experimental) Restrict cross-coding within class classified\n"
+		 "                 by given aggression level (2-200, usually 100-200, usually\n"
+		 "                 improves speed, the smaller the larger file)\n"
+		 " -cc <n>         (experimental) ... but exclude first <n> shapes in each class\n"
 		 "                 (0-1, default 0.1, usually 0.0-0.1, the smaller the faster,\n"
-		 "                 but the larger file)\n"
+		 "                 but produces slightly larger file)\n"
 #if HAVE_LEPT
 		 " -lrh, -lept-rankhaus <components>[,<size>[,<rank>]]\n"
 		 "                 (experimental) Use Leptonica rank Hausdorff classifier instead\n"
@@ -1874,7 +1874,7 @@ main(int argc, const char **argv)
 			  if (i + 1 >= argc) usage();
 			  char *end;
 			  opts.classification_aggression = strtol(dargv[++i], &end, 10);
-			  if (*end || opts.classification_aggression < 0 || opts.classification_aggression > 200) usage();
+			  if (*end || opts.classification_aggression < 2 || opts.classification_aggression > 200) usage();
 		  } else if (arg == "-cc") {
 			  if (i + 1 >= argc) usage();
 			  char *end;
