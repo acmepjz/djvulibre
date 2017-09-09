@@ -703,7 +703,7 @@ struct cjb2opts {
   bool bundled;
 #if HAVE_LEPT
   int method; // -1, JB_RANKHAUS = 0, JB_CORRELATION = 1
-  int components; // JB_CONN_COMPS = 0, JB_CHARACTERS = 1, JB_WORDS = 2
+  int components; // -1, JB_CONN_COMPS = 0, JB_CHARACTERS = 1, JB_WORDS = 2
   int sizehaus; // size of square struct elem for haus (1-10)
   float rankhaus; // rank val of haus match, each way (0.5-1.0)
   float thresh; // thresh value for correlation score (0.4-0.98)
@@ -819,7 +819,7 @@ read_tiff(CCImage *rimg, void **ppix_, TIFF *tiff, cjb2opts &opts)
 		rimg->init(w, h, opts.dpi);
 	}
 #if HAVE_LEPT
-	else {
+	if (ppix_) {
 		pix = pixCreate(w, h, 1);
 		pix->xres = pix->yres = opts.dpi;
 		data = (unsigned char *)pix->data;
@@ -869,14 +869,14 @@ read_tiff(CCImage *rimg, void **ppix_, TIFF *tiff, cjb2opts &opts)
 				rimg->add_single_run(yy, lastx, w - 1);
 		}
 #if HAVE_LEPT
-		else {
+		if (ppix_) {
 			memcpy(data, scanline, scanlinesize);
 			data += bpl;
 		}
 #endif
 	}
 #if HAVE_LEPT
-	if (pix) {
+	if (ppix_) {
 		pixEndianByteSwap(pix);
 		*ppix_ = pix;
 	}
@@ -958,19 +958,21 @@ private:
 	GURL get_output_name();
 	GURL get_output_dict_name();
 	void print_tune_result();
+	void component_analysis(CCImage &rimg);
 
 #if HAVE_LEPT
 	JBCLASSER *jbclasser;
+	std::vector<std::vector<std::pair<std::pair<int, int>, GP<GBitmap> > > > specialShapes;
 
 	void recreate_jbclasser() {
 		if (jbclasser) jbClasserDestroy(&jbclasser);
 		switch (opts.method) {
 		case JB_RANKHAUS:
-			jbclasser = jbRankHausInit(opts.components, 0x20000, 0x20000, opts.sizehaus, opts.rankhaus);
+			jbclasser = jbRankHausInit(MAX(opts.components, 0), 0x20000, 0x20000, opts.sizehaus, opts.rankhaus);
 			jbclasser->keep_pixaa = 0; // ???
 			break;
 		case JB_CORRELATION:
-			jbclasser = jbCorrelationInitWithoutComponents(opts.components, 0x20000, 0x20000, opts.thresh, opts.weightfactor);
+			jbclasser = jbCorrelationInitWithoutComponents(MAX(opts.components, 0), 0x20000, 0x20000, opts.thresh, opts.weightfactor);
 			break;
 		}
 	}
@@ -978,6 +980,24 @@ private:
 		if (jbclasser) jbClasserDestroy(&jbclasser);
 	}
 #endif
+	void add_special_shapes(int index, JB2Image *jimg2) {
+#if HAVE_LEPT
+		if (opts.method >= 0 && opts.components < 0) {
+			std::vector<std::pair<std::pair<int, int>, GP<GBitmap> > > &special = specialShapes[index];
+			for (int i = 0, m = special.size(); i < m; i++) {
+				JB2Shape shape;
+				JB2Blit  blit;
+				shape.parent = -1;
+				shape.bits = special[i].second;
+				shape.userdata = JB2SHAPE_SPECIAL;
+				blit.shapeno = jimg->add_shape(shape);
+				blit.left = special[i].first.first;
+				blit.bottom = special[i].first.second;
+				jimg->add_blit(blit);
+			}
+		}
+#endif
+	}
 };
 
 GURL cjb2::get_output_name() {
@@ -1108,7 +1128,7 @@ void cjb2::cjb2_output() {
 #ifdef WIN32
 	unsigned int tickCount = GetTickCount();
 #endif
-	if (!opts.losslevel.empty())
+	if (!opts.losslevel.empty() && opts.losslevel[0] > 1)
 		tune_jb2image_lossy_2(jimg, opts.dpi, &(opts.losslevel[0]), opts.losslevel.size(),
 		opts.classification_aggression, opts.classification_count);
 	else
@@ -1124,6 +1144,7 @@ void cjb2::cjb2_output() {
 
 	if (opts.pages_per_dict <= 1 || jimg_width.size() <= 1) { // don't generate dictionary if there is only one page left
 		jimg->set_dimension(jimg_width[0], jimg_height[0]);
+		add_special_shapes(0, jimg); // add special shapes
 
 		GP<ByteStream> obs;
 		GP<IFFByteStream> giff;
@@ -1309,6 +1330,9 @@ void cjb2::cjb2_output() {
 				DjVuFormatErrorUTF8("Page %d: %d shapes not in dictionary", pageno + 1, jimg2->get_shape_count() - jimg2->get_inherited_shape_count());
 			}
 
+			// add special shapes
+			add_special_shapes(i, jimg2);
+
 			// save new file
 			{
 				GP<ByteStream> obs;
@@ -1361,7 +1385,62 @@ void cjb2::cjb2_output() {
 	jimg_height.clear();
 	jimg_shapes.clear();
 	jimg_blits.clear();
+#if HAVE_LEPT
+	specialShapes.clear();
+#endif
 }
+
+void cjb2::component_analysis(CCImage &rimg) {
+	// collect infomation
+	const int rimg_runs = rimg.runs.size();
+
+	// Component analysis
+	rimg.make_ccids_by_analysis(); // obtain ccids
+	rimg.make_ccs_from_ccids();    // compute cc descriptors
+
+	// collect information
+	const int ccs_before = rimg.ccs.size();
+
+	if (!opts.losslevel.empty() && !opts.no_clean)
+		rimg.erase_tiny_ccs();       // clean
+	rimg.merge_and_split_ccs();    // reorganize weird ccs
+	rimg.sort_in_reading_order();  // sort cc descriptors
+
+	// collect information
+	const int ccs_after = rimg.ccs.size();
+
+	// print information
+	if (opts.verbose) {
+		DjVuFormatErrorUTF8("cjb2: %d runs, %d ccs, %d after cleaning, merging & splitting.",
+			rimg_runs, ccs_before, ccs_after);
+	}
+}
+
+#if HAVE_LEPT
+static PIX* GBitmap2Pix(const GP<GBitmap>& input, int dpi) {
+	const int w = input->columns();
+	const int h = input->rows();
+	PIX *pix = pixCreate(w, h, 1);
+	pix->xres = pix->yres = dpi;
+	unsigned int *data = pix->data;
+	const int wpl = pix->wpl;
+	for (int y = h - 1; y >= 0; y--) {
+		const unsigned char *row = (*input)[y];
+		unsigned int *row2 = data;
+		unsigned int mask = 0x80000000;
+		for (int x = 0; x < w; x++) {
+			if (row[x]) *row2 |= mask;
+			mask >>= 1;
+			if (mask == 0) {
+				row2++;
+				mask = 0x80000000;
+			}
+		}
+		data += wpl;
+	}
+	return pix;
+}
+#endif
 
 cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, cjb2opts &opts_)
 	: pageno(0)
@@ -1379,7 +1458,10 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 
 	// disable internal classifier if Leptonica is used
 #if HAVE_LEPT
-	if (opts.method >= 0) opts.losslevel.clear();
+	if (opts.method >= 0 && !opts.losslevel.empty()) {
+		opts.losslevel.clear();
+		opts.losslevel.push_back(1);
+	}
 #endif
 
 	// Load shared dictionary
@@ -1481,40 +1563,22 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 					if(!TIFFReadDirectory(tiff)) break;
 				}
 #if HAVE_LEPT
-				if (opts.method >= 0) {
-					read_tiff(0, (void**)&pix, tiff, opts);
-				} else
+				read_tiff(
+					(opts.method >= 0 && opts.components >= 0) ? (CCImage*)0 : &rimg,
+					(opts.method >= 0) ? (void**)&pix : (void**)0,
+					tiff, opts);
+#else
+				read_tiff(&rimg, 0, tiff, opts);
 #endif
-				{
-					read_tiff(&rimg, 0, tiff, opts);
-				}
 			} else
 #endif
 			{
 				GP<GBitmap> input = GBitmap::create(*ibs);
 #if HAVE_LEPT
 				if (opts.method >= 0) {
-					const int w = input->columns();
-					const int h = input->rows();
-					pix = pixCreate(w, h, 1);
-					pix->xres = pix->yres = opts.dpi;
-					unsigned int *data = pix->data;
-					const int wpl = pix->wpl;
-					for (int y = h - 1; y >= 0; y--) {
-						const unsigned char *row = (*input)[y];
-						unsigned int *row2 = data;
-						unsigned int mask = 0x80000000;
-						for (int x = 0; x < w; x++) {
-							if (row[x]) *row2 |= mask;
-							mask >>= 1;
-							if (mask == 0) {
-								row2++;
-								mask = 0x80000000;
-							}
-						}
-						data += wpl;
-					}
-				} else
+					pix = GBitmap2Pix(input, opts.dpi);
+				}
+				if (opts.method < 0 || opts.components < 0)
 #endif
 				{
 					rimg.init(input->columns(), input->rows(), opts.dpi);
@@ -1527,9 +1591,36 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 				if (!jbclasser) recreate_jbclasser();
 
 				// get connected components
-				BOXA *boxa;
-				PIXA *pixa;
-				jbGetComponents(pix, jbclasser->components, 0x20000, 0x20000, &boxa, &pixa);
+				BOXA *boxa = 0;
+				PIXA *pixa = 0;
+				if (opts.components >= 0) {
+					jbGetComponents(pix, opts.components, 0x20000, 0x20000, &boxa, &pixa);
+				} else {
+					// ... using internal component analyzer
+					component_analysis(rimg);
+
+					specialShapes.push_back(std::vector<std::pair<std::pair<int, int>, GP<GBitmap> > >());
+					std::vector<std::pair<std::pair<int, int>, GP<GBitmap> > > &special = specialShapes.back();
+					boxa = boxaCreate(0);
+					pixa = pixaCreate(0);
+
+					// Iterate over CCs
+					for (int ccid = 0, ccid_m = rimg.ccs.hbound(); ccid <= ccid_m; ccid++) {
+						GP<GBitmap> bmp = rimg.get_bitmap_for_cc(ccid);
+						GRect bb = rimg.ccs[ccid].bb;
+						if (ccid >= rimg.nregularccs) {
+							std::pair<std::pair<int, int>, GP<GBitmap> > s;
+							s.first.first = bb.xmin;
+							s.first.second = bb.ymin;
+							s.second = bmp;
+							special.push_back(s);
+							bmp->compress();
+						} else {
+							boxaAddBox(boxa, boxCreate(bb.xmin, rimg.height - bb.ymax, bb.xmax - bb.xmin, bb.ymax - bb.ymin), L_INSERT);
+							pixaAddPix(pixa, GBitmap2Pix(bmp, opts.dpi), L_INSERT);
+						}
+					}
+				}
 
 				const int old_shapes = jbclasser->nclass;
 				const int old_blits = jbclasser->baseindex;
@@ -1555,29 +1646,8 @@ cjb2::cjb2(const std::vector<GURL> &inputlist, const std::string &outputname_, c
 			} else
 #endif
 			{
-				// collect infomation
-				const int rimg_runs = rimg.runs.size();
-
 				// Component analysis
-				rimg.make_ccids_by_analysis(); // obtain ccids
-				rimg.make_ccs_from_ccids();    // compute cc descriptors
-
-				// collect information
-				const int ccs_before = rimg.ccs.size();
-
-				if (!opts.losslevel.empty() && !opts.no_clean)
-					rimg.erase_tiny_ccs();       // clean
-				rimg.merge_and_split_ccs();    // reorganize weird ccs
-				rimg.sort_in_reading_order();  // sort cc descriptors
-
-				// collect information
-				const int ccs_after = rimg.ccs.size();
-
-				// print information
-				if (opts.verbose) {
-					DjVuFormatErrorUTF8("cjb2: %d runs, %d ccs, %d after cleaning, merging & splitting.",
-						rimg_runs, ccs_before, ccs_after);
-				}
+				component_analysis(rimg);
 
 				// Append to jb2image (assuming tune_jb2image_* doesn't change the order of shapes and blits)
 				if (!jimg) {
@@ -1734,6 +1804,7 @@ usage()
 		 "                 (experimental) Use Leptonica rank Hausdorff classifier instead\n"
 		 "                 of internal classifier for lossy compression.\n"
 		 "             components: minimal classifying unit:\n"
+		 "                 -1=connected components (using internal c.c. extractor)\n"
 		 "                 0=connected components, 1=characters, 2=words\n"
 		 "             size: size of square structuring element [1 - 10, default 2]; 2 is\n"
 		 "                 necessary for reasonable accuracy of small components; combine\n"
@@ -1888,7 +1959,7 @@ main(int argc, const char **argv)
 			  opts.sizehaus = 2;
 			  opts.rankhaus = 0.97;
 			  opts.components = strtol(dargv[++i], &end, 10);
-			  if ((*end != ',' && *end) || opts.components < 0 || opts.components > 2) usage();
+			  if ((*end != ',' && *end) || opts.components < -1 || opts.components > 2) usage();
 			  if (*end) {
 				  opts.sizehaus = strtol(end + 1, &end, 10);
 				  if ((*end != ',' && *end) || opts.sizehaus < 1 || opts.sizehaus > 10) usage();
@@ -1904,7 +1975,7 @@ main(int argc, const char **argv)
 			  opts.thresh = 0.8;
 			  opts.weightfactor = 0.6;
 			  opts.components = strtol(dargv[++i], &end, 10);
-			  if ((*end != ',' && *end) || opts.components < 0 || opts.components > 2) usage();
+			  if ((*end != ',' && *end) || opts.components < -1 || opts.components > 2) usage();
 			  if (*end) {
 				  opts.thresh = strtof(end + 1, &end);
 				  if ((*end != ',' && *end) || opts.thresh < 0.4 || opts.thresh > 0.98) usage();
