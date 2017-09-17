@@ -70,12 +70,16 @@
 # include <new> // try standard c++ anyway!
 #endif
 
-#ifdef _WIN32
-#pragma warning( disable : 4251 )
-# ifdef DJVUAPI_EXPORT
-#  define DJVUAPI __declspec(dllexport)
-# else
-#  define DJVUAPI __declspec(dllimport)
+#ifndef DJVUAPI
+# ifdef _WIN32
+#  ifdef _MSC_VER
+#   pragma warning( disable : 4251 )
+#  endif
+#  ifdef DJVUAPI_EXPORT
+#   define DJVUAPI __declspec(dllexport)
+#  else
+#   define DJVUAPI __declspec(dllimport)
+#  endif
 # endif
 #endif
 #ifndef DJVUAPI
