@@ -24,7 +24,7 @@ Use CMake to generate makefile.
 
 Optional libraries:
 * FreeImage
-* FLANN (not yet)
-* Leptonica (not yet)
+* nanoflann (not yet)
+* Leptonica
 * OpenCV (not yet)
 * eigen3 (not yet)

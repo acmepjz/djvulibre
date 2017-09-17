@@ -62,9 +62,9 @@ set(DJVU_SRC
 
 include_directories(${ADDITIONAL_INCLUDES})
 
-add_library(djvulibre SHARED ${DJVU_SRC})
+add_definitions(-DDJVUAPI_EXPORT -DMINILISPAPI_EXPORT)
 
-set_target_properties(djvulibre PROPERTIES DEFINE_SYMBOL DJVUAPI_EXPORT)
+add_library(djvulibre SHARED ${DJVU_SRC})
 
 target_link_libraries(djvulibre ${ADDITIONAL_LIBRARIES})
 
