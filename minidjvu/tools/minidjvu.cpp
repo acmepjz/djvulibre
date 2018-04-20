@@ -48,6 +48,10 @@ const char* dict_suffix = NULL;
 std::vector<FileAndPageNumber> filelist;
 int showpage = 0;
 
+int crop_width = 0, crop_height = 0;
+int crop_halign = 0, crop_valign = 0;
+int crop_xshift = 0, crop_yshift = 0;
+
 /* ========================================================================= */
 
 /* file name template routines (for multipage encoding) {{{ */
@@ -136,7 +140,16 @@ static void show_usage_and_exit(void)           /* {{{ */
     printf(_("Options:\n"));
     printf(_("    -A, --Averaging:               compute \"average\" representatives\n"));
     printf(_("    -a <n>, --aggression <n>:      set aggression level (default 100)\n"));
-    printf(_("    -c, --clean                    remove small black pieces\n"));
+	printf(
+		"    -C, --Crop <w>,<h>,[<halign>],[<valign>],[<xshift>],[<yshift>]\n"
+		"                 Crop the input file to the specified size.\n"
+		"             w, h: the size"
+		"             halign: left(default), center, right\n"
+		"             valign: top(default), vcenter, bottom\n"
+		"             xshift, yshift: additional shift (default=0)\n"
+		);
+	printf(_("    -c, --clean                    remove small black pieces\n"));
+	printf(_("    -c, --clean                    remove small black pieces\n"));
     printf(_("    -d <n>, --dpi <n>:             set resolution in dots per inch\n"));
     printf(_("    -e, --erosion                  sacrifice quality to gain in size\n"));
     printf(_("    -f, --filelist <filelist>      input a list of files from a text file\n"));
@@ -219,6 +232,46 @@ static mdjvu_matcher_options_t get_matcher_options(void)
     return m_options;
 }
 
+static void hack_image(mdjvu_image_t image) {
+	int w = mdjvu_image_get_width(image);
+	int h = mdjvu_image_get_height(image);
+
+	int newWidth = w;
+	int newHeight = h;
+	int newXShift = crop_xshift;
+	int newYShift = -crop_yshift; // NOTE: y coordinate is upside down
+	if (crop_width > 0 && crop_height > 0) {
+		if (crop_halign == 1) {
+			// center
+			newXShift += (crop_width - w) / 2;
+		} else if (crop_halign == 2) {
+			// right
+			newXShift += (crop_width - w);
+		}
+		// NOTE: y coordinate is upside down
+		if (crop_valign == 1) {
+			// vcenter
+			newYShift += (crop_height - h) / 2;
+		} else if (crop_valign == 0) {
+			// top
+			newYShift += (crop_height - h);
+		}
+		newWidth = crop_width;
+		newHeight = crop_height;
+	}
+
+	int m = mdjvu_image_get_blit_count(image);
+	for (int i = 0; i < m; i++) {
+		mdjvu_image_set_blit_x(image, i, mdjvu_image_get_blit_x(image, i) + newXShift);
+		mdjvu_image_set_blit_y(image, i, mdjvu_image_get_blit_y(image, i) + newYShift);
+	}
+
+	// hack internal data!!!
+	int32 *p = (int32*)image;
+	p[0] = newWidth;
+	p[1] = newHeight;
+}
+
 static void sort_and_save_image(mdjvu_image_t image, const char *path)
 {
     mdjvu_error_t error;
@@ -234,6 +287,8 @@ static void sort_and_save_image(mdjvu_image_t image, const char *path)
     mdjvu_compression_options_destroy(options);
 
     if (verbose) printf(_("encoding to `%s'\n"), path);
+
+	hack_image(image);
 
     if (!mdjvu_save_djvu_page(image, path, NULL, &error, erosion))
     {
@@ -568,7 +623,9 @@ static void multipage_encode(const std::vector<FileAndPageNumber> &pages, const 
             if (verbose)
                 printf(_("saving page #%d into %s using dictionary %s\n"), pages_compressed + i + 1, path.c_str(), dict_name.c_str());
             
-            if (!indirect)
+			hack_image(images[i]);
+
+			if (!indirect)
                 sizes[el] = mdjvu_file_save_djvu_page(images[i], (mdjvu_file_t) tf, strip_dir(dict_name.c_str()), 0, &error, erosion);
             else
                 sizes[el] = mdjvu_save_djvu_page(images[i], path.c_str(), strip_dir(dict_name.c_str()), &error, erosion);
@@ -725,7 +782,76 @@ static int process_options(int argc, char **argv)
             clean = 1;
             averaging = 1;
         }
-        else if (same_option(option, "pages-per-dict"))
+		else if (same_option(option, "Crop"))
+		{
+			i++;
+			if (i >= argc) show_usage_and_exit();
+
+			const char *start = argv[i];
+			char *end;
+
+			crop_width = strtol(start, &end, 10);
+			if (crop_width < 0 || crop_width >= 65536) show_usage_and_exit();
+			if (*end != ',') show_usage_and_exit();
+			start = end + 1;
+
+			crop_height = strtol(start, &end, 10);
+			if (crop_height < 0 || crop_height >= 65536) show_usage_and_exit();
+
+			if (*end) {
+				if (*end != ',') show_usage_and_exit();
+				std::string s = end + 1;
+				std::string s1;
+				size_t lpe = s.find_first_of(',');
+				if (lpe == std::string::npos) {
+					s1 = s;
+					s.clear();
+				} else {
+					s1 = s.substr(0, lpe);
+					s = s.substr(lpe + 1);
+				}
+				if (s1.empty() || s1 == "left") crop_halign = 0;
+				else if (s1 == "center") crop_halign = 1;
+				else if (s1 == "right") crop_halign = 2;
+				else show_usage_and_exit();
+
+				lpe = s.find_first_of(',');
+				if (lpe == std::string::npos) {
+					s1 = s;
+					s.clear();
+				} else {
+					s1 = s.substr(0, lpe);
+					s = s.substr(lpe + 1);
+				}
+				if (s1.empty() || s1 == "top") crop_valign = 0;
+				else if (s1 == "vcenter") crop_valign = 1;
+				else if (s1 == "bottom") crop_valign = 2;
+				else show_usage_and_exit();
+
+				lpe = s.find_first_of(',');
+				if (lpe == std::string::npos) {
+					s1 = s;
+					s.clear();
+				} else {
+					s1 = s.substr(0, lpe);
+					s = s.substr(lpe + 1);
+				}
+				if (s1.empty()) crop_xshift = 0;
+				else crop_xshift = atoi(s1.c_str());
+
+				lpe = s.find_first_of(',');
+				if (lpe == std::string::npos) {
+					s1 = s;
+					s.clear();
+				} else {
+					s1 = s.substr(0, lpe);
+					s = s.substr(lpe + 1);
+				}
+				if (s1.empty()) crop_yshift = 0;
+				else crop_yshift = atoi(s1.c_str());
+			}
+		}
+		else if (same_option(option, "pages-per-dict"))
         {
             i++;
             if (i == argc) show_usage_and_exit();
