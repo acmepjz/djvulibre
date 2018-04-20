@@ -701,6 +701,9 @@ struct cjb2opts {
   float classification_count;
   bool no_clean;
   bool bundled;
+  int width, height;
+  int halign, valign;
+  int xshift, yshift;
 #if HAVE_LEPT
   int method; // -1, JB_RANKHAUS = 0, JB_CORRELATION = 1
   int components; // -1, JB_CONN_COMPS = 0, JB_CHARACTERS = 1, JB_WORDS = 2
@@ -980,7 +983,7 @@ private:
 		if (jbclasser) jbClasserDestroy(&jbclasser);
 	}
 #endif
-	void add_special_shapes(int index, JB2Image *jimg2) {
+	void add_special_shapes(int index, JB2Image *jimg2, int xshift, int yshift) {
 #if HAVE_LEPT
 		if (opts.method >= 0 && opts.components < 0) {
 			std::vector<std::pair<std::pair<int, int>, GP<GBitmap> > > &special = specialShapes[index];
@@ -991,12 +994,38 @@ private:
 				shape.bits = special[i].second;
 				shape.userdata = JB2SHAPE_SPECIAL;
 				blit.shapeno = jimg->add_shape(shape);
-				blit.left = special[i].first.first;
-				blit.bottom = special[i].first.second;
+				blit.left = special[i].first.first + xshift;
+				blit.bottom = special[i].first.second + yshift;
 				jimg->add_blit(blit);
 			}
 		}
 #endif
+	}
+
+	void get_cropped_size(int w, int h, int& newWidth, int& newHeight, int& newXShift, int& newYShift) const {
+		newWidth = w;
+		newHeight = h;
+		newXShift = opts.xshift;
+		newYShift = -opts.yshift; // NOTE: y coordinate is upside down
+		if (opts.width > 0 && opts.height > 0) {
+			if (opts.halign == 1) {
+				// center
+				newXShift += (opts.width - w) / 2;
+			} else if (opts.halign == 2) {
+				// right
+				newXShift += (opts.width - w);
+			}
+			// NOTE: y coordinate is upside down
+			if (opts.valign == 1) {
+				// vcenter
+				newYShift += (opts.height - h) / 2;
+			} else if (opts.valign == 0) {
+				// top
+				newYShift += (opts.height - h);
+			}
+			newWidth = opts.width;
+			newHeight = opts.height;
+		}
 	}
 };
 
@@ -1143,8 +1172,16 @@ void cjb2::cjb2_output() {
 #endif
 
 	if (opts.pages_per_dict <= 1 || jimg_width.size() <= 1) { // don't generate dictionary if there is only one page left
-		jimg->set_dimension(jimg_width[0], jimg_height[0]);
-		add_special_shapes(0, jimg); // add special shapes
+		int newWidth, newHeight, newXShift, newYShift;
+		get_cropped_size(jimg_width[0], jimg_height[0], newWidth, newHeight, newXShift, newYShift);
+
+		jimg->set_dimension(newWidth, newHeight);
+		for (int i = 0, m = jimg->get_blit_count(); i < m; i++) {
+			JB2Blit *blit = jimg->get_blit(i);
+			blit->left += newXShift;
+			blit->bottom += newYShift;
+		}
+		add_special_shapes(0, jimg, newXShift, newYShift); // add special shapes
 
 		GP<ByteStream> obs;
 		GP<IFFByteStream> giff;
@@ -1167,8 +1204,8 @@ void cjb2::cjb2_output() {
 		// -- ``INFO'' chunk
 		GP<DjVuInfo> ginfo = DjVuInfo::create();
 		DjVuInfo &info = *ginfo;
-		info.height = jimg_height[0];
-		info.width = jimg_width[0];
+		info.height = newHeight;
+		info.width = newWidth;
 		info.dpi = opts.dpi;
 		iff.put_chunk("INFO");
 		info.encode(*iff.get_bytestream());
@@ -1296,10 +1333,13 @@ void cjb2::cjb2_output() {
 
 		// for each page
 		for (int shapeno = shapes0, blitno = 0, i = 0, m = jimg_width.size(); i < m; i++) {
+			int newWidth, newHeight, newXShift, newYShift;
+			get_cropped_size(jimg_width[i], jimg_height[i], newWidth, newHeight, newXShift, newYShift);
+
 			// create new JB2Image for the current page
 			GP<JB2Image> jimg2 = JB2Image::create();
 			jimg2->set_inherited_dict(newDict);
-			jimg2->set_dimension(jimg_width[i], jimg_height[i]);
+			jimg2->set_dimension(newWidth, newHeight);
 
 			// calculate the new index for remaining shapes in the current page
 			for (int m2 = jimg_shapes[i]; shapeno < m2; shapeno++) {
@@ -1322,6 +1362,8 @@ void cjb2::cjb2_output() {
 					blit.shapeno = newIndex[blit.shapeno - shapes0];
 					if ((int)blit.shapeno < 0) continue;
 				}
+				blit.left += newXShift;
+				blit.bottom += newYShift;
 				jimg2->add_blit(blit);
 			}
 
@@ -1331,7 +1373,7 @@ void cjb2::cjb2_output() {
 			}
 
 			// add special shapes
-			add_special_shapes(i, jimg2);
+			add_special_shapes(i, jimg2, newXShift, newYShift);
 
 			// save new file
 			{
@@ -1355,8 +1397,8 @@ void cjb2::cjb2_output() {
 				// -- ``INFO'' chunk
 				GP<DjVuInfo> ginfo = DjVuInfo::create();
 				DjVuInfo &info = *ginfo;
-				info.height = jimg_height[i];
-				info.width = jimg_width[i];
+				info.height = newHeight;
+				info.width = newWidth;
 				info.dpi = opts.dpi;
 				iff.put_chunk("INFO");
 				info.encode(*iff.get_bytestream());
@@ -1778,7 +1820,13 @@ usage()
          "Options are:\n"
          " -v, -verbose    Display additional messages.\n"
          " -dpi <n>        Specify image resolution (25-1200, default 300).\n"
-         " -clean          Cleanup image by removing small flyspecks.\n"
+		 " -crop <w>,<h>,[<halign>],[<valign>],[<xshift>],[<yshift>]\n"
+		 "                 Crop the input file to the specified size.\n"
+		 "             w, h: the size"
+		 "             halign: left(default), center, right\n"
+		 "             valign: top(default), vcenter, bottom\n"
+		 "             xshift, yshift: additional shift (default=0)\n"
+		 " -clean          Cleanup image by removing small flyspecks.\n"
 		 " -no-clean       Don't cleanup during lossy compression.\n"
          " -lossy          Lossy compression (equivalent to -losslevel 100,\n"
 		 "                                    implies -clean as well)\n"
@@ -1876,6 +1924,9 @@ main(int argc, const char **argv)
       // Defaults
       opts.forcedpi = 0;
       opts.dpi = 300;
+	  opts.width = opts.height = 0;
+	  opts.halign = opts.valign = 0;
+	  opts.xshift = opts.yshift = 0;
       opts.verbose = false;
 	  opts.pages_per_dict = 10;
 	  opts.classification_aggression = 0;
@@ -1901,6 +1952,73 @@ main(int argc, const char **argv)
 			  opts.dpi = opts.forcedpi = strtol(dargv[++i], &end, 10);
 			  if (*end || opts.dpi < 25 || opts.dpi>1200)
 				  usage();
+		  }
+		  else if (arg == "-crop")
+		  {
+			  if (i + 1 >= argc) usage();
+			  const char *start = dargv[++i];
+			  char *end;
+
+			  opts.width = strtol(start, &end, 10);
+			  if (opts.width < 0 || opts.width >= 65536) usage();
+			  if (*end != ',') usage();
+			  start = end + 1;
+
+			  opts.height = strtol(start, &end, 10);
+			  if (opts.height < 0 || opts.height >= 65536) usage();
+
+			  if (*end) {
+				  if (*end != ',') usage();
+				  std::string s = end + 1;
+				  std::string s1;
+				  size_t lpe = s.find_first_of(',');
+				  if (lpe == std::string::npos) {
+					  s1 = s;
+					  s.clear();
+				  } else {
+					  s1 = s.substr(0, lpe);
+					  s = s.substr(lpe + 1);
+				  }
+				  if (s1.empty() || s1 == "left") opts.halign = 0;
+				  else if (s1 == "center") opts.halign = 1;
+				  else if (s1 == "right") opts.halign = 2;
+				  else usage();
+
+				  lpe = s.find_first_of(',');
+				  if (lpe == std::string::npos) {
+					  s1 = s;
+					  s.clear();
+				  } else {
+					  s1 = s.substr(0, lpe);
+					  s = s.substr(lpe + 1);
+				  }
+				  if (s1.empty() || s1 == "top") opts.valign = 0;
+				  else if (s1 == "vcenter") opts.valign = 1;
+				  else if (s1 == "bottom") opts.valign = 2;
+				  else usage();
+
+				  lpe = s.find_first_of(',');
+				  if (lpe == std::string::npos) {
+					  s1 = s;
+					  s.clear();
+				  } else {
+					  s1 = s.substr(0, lpe);
+					  s = s.substr(lpe + 1);
+				  }
+				  if (s1.empty()) opts.xshift = 0;
+				  else opts.xshift = atoi(s1.c_str());
+
+				  lpe = s.find_first_of(',');
+				  if (lpe == std::string::npos) {
+					  s1 = s;
+					  s.clear();
+				  } else {
+					  s1 = s.substr(0, lpe);
+					  s = s.substr(lpe + 1);
+				  }
+				  if (s1.empty()) opts.yshift = 0;
+				  else opts.yshift = atoi(s1.c_str());
+			  }
 		  }
 		  else if (arg == "-dict")
 		  {
